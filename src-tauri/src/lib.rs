@@ -131,6 +131,18 @@ fn read_file_content(file_path: String) -> Result<String, String> {
     fs::read_to_string(&file_path).map_err(|e| e.to_string())
 }
 
+/// 写入文件内容
+#[tauri::command]
+fn write_file_content(file_path: String, content: String) -> Result<(), String> {
+    let path = PathBuf::from(file_path);
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    fs::write(path, content).map_err(|e| e.to_string())
+}
+
 /// 获取用户主目录
 #[tauri::command]
 fn get_home_dir() -> Result<String, String> {
@@ -1174,6 +1186,7 @@ pub fn run() {
             read_account_auth,
             delete_account_auth,
             read_file_content,
+            write_file_content,
             get_home_dir,
             get_codex_wham_usage,
             get_usage_from_sessions,

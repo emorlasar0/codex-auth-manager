@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useAccountStore } from './stores/useAccountStore';
 import { useAutoRefresh } from './hooks';
 import { invoke } from '@tauri-apps/api/core';
-import { isMissingIdentityError, type AddAccountOptions } from './utils/storage';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import {
+  exportAccountsBackup,
+  importAccountsBackup,
+  isMissingIdentityError,
+  type AddAccountOptions,
+} from './utils/storage';
 import {
   AccountCard,
   AddAccountModal,
@@ -190,6 +196,56 @@ function App() {
     }
   };
 
+  const handleImportBackup = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: 'Codex Manager Backup',
+            extensions: ['json'],
+          },
+        ],
+      });
+
+      if (!selected || Array.isArray(selected)) return;
+
+      const backupJson = await invoke<string>('read_file_content', {
+        filePath: selected,
+      });
+      const result = await importAccountsBackup(backupJson);
+      await loadAccounts();
+      showToast(`已导入 ${result.importedCount} 个账号`, 'success');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '导入备份失败');
+    }
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      const filePath = await save({
+        defaultPath: `codex-manager-backup-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [
+          {
+            name: 'Codex Manager Backup',
+            extensions: ['json'],
+          },
+        ],
+      });
+
+      if (!filePath) return;
+
+      const backupJson = await exportAccountsBackup();
+      await invoke('write_file_content', {
+        filePath,
+        content: backupJson,
+      });
+      showToast('备份已导出', 'success');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '导出备份失败');
+    }
+  };
+
   const handleConfirmIdentityImport = async () => {
     if (!identityConfirm) return;
     const { authJson, alias, source } = identityConfirm;
@@ -283,7 +339,9 @@ function App() {
           accountCount={accounts.length}
           activeName={activeName}
           onAddAccount={() => setShowAddModal(true)}
-          onSyncAccount={handleSyncAccount}
+          onReadCurrentAccount={handleSyncAccount}
+          onImportBackup={handleImportBackup}
+          onExportBackup={handleExportBackup}
           onRefreshAll={handleRefreshAll}
           onOpenSettings={() => setShowSettings(true)}
           onToggleProxy={handleToggleProxy}
@@ -350,7 +408,6 @@ function App() {
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-sm font-semibold text-[var(--dash-text-primary)]">账号列表</h2>
-                    <p className="text-xs text-[var(--dash-text-secondary)]">聚焦关键用量信息</p>
                   </div>
                   <span className="text-xs text-[var(--dash-text-muted)]">
                     共 {accounts.length} 个

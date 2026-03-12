@@ -4,7 +4,9 @@ interface HeaderProps {
   accountCount: number;
   activeName?: string;
   onAddAccount: () => void;
-  onSyncAccount: () => void;
+  onReadCurrentAccount: () => void;
+  onImportBackup: () => void;
+  onExportBackup: () => void;
   onRefreshAll: () => void | Promise<void>;
   onOpenSettings: () => void;
   onToggleProxy: () => void;
@@ -19,7 +21,9 @@ export const Header: React.FC<HeaderProps> = ({
   accountCount,
   activeName,
   onAddAccount,
-  onSyncAccount,
+  onReadCurrentAccount,
+  onImportBackup,
+  onExportBackup,
   onRefreshAll,
   onOpenSettings,
   onToggleProxy,
@@ -30,6 +34,7 @@ export const Header: React.FC<HeaderProps> = ({
   children,
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   
   useEffect(() => {
     const timer = setInterval(() => {
@@ -63,25 +68,16 @@ export const Header: React.FC<HeaderProps> = ({
   const headerBody = (
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-[var(--dash-text-muted)]">
-          {formatDate(currentTime)}
-        </p>
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-[var(--dash-text-muted)]">
+          <span>{formatDate(currentTime)}</span>
+          <span className="tabular-nums normal-case tracking-normal">{formatTime(currentTime)}</span>
+        </div>
         <h1 className="text-2xl md:text-3xl font-semibold text-[var(--dash-text-primary)]">
           {greeting}，{displayName}！
         </h1>
-        <p className="text-sm text-[var(--dash-text-secondary)] mt-1">
-          {accountCount > 0 ? `当前管理 ${accountCount} 个账号` : '添加账号开始使用'}
-        </p>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap justify-end">
-        <div className="dash-pill bg-[var(--dash-accent-soft)] text-[var(--dash-accent)] hidden sm:flex">
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6l4 2" />
-          </svg>
-          <span className="tabular-nums">{formatTime(currentTime)}</span>
-        </div>
-
         {accountCount > 0 && (
           <button
             onClick={onRefreshAll}
@@ -115,26 +111,87 @@ export const Header: React.FC<HeaderProps> = ({
           <span>{isProxyEnabled ? '代理开启' : '代理关闭'}</span>
         </button>
 
-        <button
-          onClick={onSyncAccount}
-          disabled={isLoading}
-          className="h-10 px-4 rounded-full bg-blue-50 text-blue-600 text-sm font-medium transition-colors hover:bg-blue-100 disabled:bg-slate-200 disabled:text-slate-400 flex items-center gap-2"
+        <div
+          className="relative"
+          onMouseEnter={() => setIsAddMenuOpen(true)}
+          onMouseLeave={() => setIsAddMenuOpen(false)}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          同步当前账号
-        </button>
+          <div className="flex items-center">
+            <button
+              onClick={onAddAccount}
+              className="h-10 pl-4 pr-3 rounded-l-full bg-[var(--dash-accent)] text-white text-sm font-medium transition-colors hover:brightness-110 flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              添加账号
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsAddMenuOpen((open) => !open)}
+              className="h-10 w-10 rounded-r-full border-l border-white/20 bg-[var(--dash-accent)] text-white transition-colors hover:brightness-110 flex items-center justify-center"
+              aria-label="展开添加账号菜单"
+              aria-expanded={isAddMenuOpen}
+            >
+              <svg
+                className={`w-4 h-4 transition-transform ${isAddMenuOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
 
-        <button
-          onClick={onAddAccount}
-          className="h-10 px-4 rounded-full bg-[var(--dash-accent)] text-white text-sm font-medium transition-colors hover:brightness-110 flex items-center gap-2"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          添加账号
-        </button>
+          {isAddMenuOpen && (
+            <div className="absolute right-0 top-full mt-2 w-52 rounded-2xl border border-[var(--dash-border)] bg-white/95 backdrop-blur shadow-[0_20px_50px_rgba(15,23,42,0.16)] p-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddMenuOpen(false);
+                  onReadCurrentAccount();
+                }}
+                disabled={isLoading}
+                className="w-full h-10 px-3 rounded-xl text-sm text-left text-[var(--dash-text-primary)] hover:bg-slate-100 disabled:text-slate-400 disabled:hover:bg-transparent flex items-center gap-2"
+              >
+                <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                读取当前登录
+              </button>
+
+              <div className="my-1 h-px bg-[var(--dash-border)]" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddMenuOpen(false);
+                  onImportBackup();
+                }}
+                className="w-full h-10 px-3 rounded-xl text-sm text-left text-[var(--dash-text-primary)] hover:bg-slate-100 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4 text-[var(--dash-text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                导入备份
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddMenuOpen(false);
+                  onExportBackup();
+                }}
+                className="w-full h-10 px-3 rounded-xl text-sm text-left text-[var(--dash-text-primary)] hover:bg-slate-100 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4 text-[var(--dash-text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                导出备份
+              </button>
+            </div>
+          )}
+        </div>
 
         <button
           onClick={onOpenSettings}

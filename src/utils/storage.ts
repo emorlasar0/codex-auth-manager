@@ -29,6 +29,25 @@ type AccountIdentity = {
   email: string | null;
 };
 
+type AccountWorkspaceMetadata = {
+  workspaceName?: string | null;
+  accountUserId?: string | null;
+  accountStructure?: AccountInfo['accountStructure'];
+  planType?: AccountInfo['planType'] | null;
+};
+
+type AccountBackupEntry = {
+  alias?: string;
+  authConfig: CodexAuthConfig;
+};
+
+type AccountsBackupFile = {
+  format: 'codex-manager-backup';
+  version: '1.0.0';
+  exportedAt: string;
+  accounts: AccountBackupEntry[];
+};
+
 function normalizeId(value?: string | null): string | null {
   const trimmed = (value ?? '').trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -140,6 +159,9 @@ function buildFallbackAccountInfo(identity: AccountIdentity): AccountInfo {
     planType: 'free',
     accountId: identity.accountId ?? '',
     userId: identity.userId ?? '',
+    accountUserId: undefined,
+    accountStructure: undefined,
+    workspaceName: undefined,
     subscriptionActiveUntil: undefined,
     organizations: [],
   };
@@ -159,6 +181,67 @@ async function loadAccountAuth(accountId: string): Promise<CodexAuthConfig> {
 
 async function deleteAccountAuth(accountId: string): Promise<void> {
   await invoke('delete_account_auth', { accountId });
+}
+
+function parseAccountsBackup(data: string): AccountsBackupFile {
+  let parsed: Partial<AccountsBackupFile>;
+  try {
+    parsed = JSON.parse(data) as Partial<AccountsBackupFile>;
+  } catch {
+    throw new Error('备份文件不是有效的 JSON');
+  }
+
+  if (parsed.format !== 'codex-manager-backup') {
+    throw new Error('无效的备份格式');
+  }
+
+  if (!Array.isArray(parsed.accounts)) {
+    throw new Error('备份文件缺少账号列表');
+  }
+
+  parsed.accounts.forEach((account, index) => {
+    if (!account?.authConfig?.tokens?.id_token) {
+      throw new Error(`备份文件中的第 ${index + 1} 个账号缺少有效凭证`);
+    }
+  });
+
+  return {
+    format: 'codex-manager-backup',
+    version: '1.0.0',
+    exportedAt: parsed.exportedAt || new Date().toISOString(),
+    accounts: parsed.accounts,
+  };
+}
+
+function mergeWorkspaceMetadata(
+  accountInfo: AccountInfo,
+  metadata: AccountWorkspaceMetadata | null | undefined
+): AccountInfo {
+  if (!metadata) return accountInfo;
+
+  return {
+    ...accountInfo,
+    accountUserId: metadata.accountUserId ?? accountInfo.accountUserId,
+    accountStructure: metadata.accountStructure ?? accountInfo.accountStructure,
+    workspaceName: metadata.workspaceName ?? accountInfo.workspaceName,
+    planType: (metadata.planType ?? accountInfo.planType) as AccountInfo['planType'],
+  };
+}
+
+async function fetchWorkspaceMetadata(
+  accountId: string,
+  config: AppConfig
+): Promise<AccountWorkspaceMetadata | null> {
+  try {
+    return await invoke<AccountWorkspaceMetadata | null>('get_wham_account_metadata', {
+      accountId,
+      proxyEnabled: config.proxyEnabled,
+      proxyUrl: config.proxyUrl,
+    });
+  } catch (error) {
+    console.log(`Failed to fetch workspace metadata for account ${accountId}:`, error);
+    return null;
+  }
 }
 
 /**
@@ -213,6 +296,38 @@ export async function saveAccountsStore(store: AccountsStore): Promise<void> {
   await invoke('save_accounts_store', { data });
 }
 
+export async function exportAccountsBackup(): Promise<string> {
+  const store = await loadAccountsStore();
+
+  const accounts = await Promise.all(
+    store.accounts.map(async (account) => ({
+      alias: account.alias || undefined,
+      authConfig: await loadAccountAuth(account.id),
+    }))
+  );
+
+  const backup: AccountsBackupFile = {
+    format: 'codex-manager-backup',
+    version: '1.0.0',
+    exportedAt: new Date().toISOString(),
+    accounts,
+  };
+
+  return JSON.stringify(backup, null, 2);
+}
+
+export async function importAccountsBackup(
+  backupJson: string
+): Promise<{ importedCount: number }> {
+  const backup = parseAccountsBackup(backupJson);
+
+  for (const account of backup.accounts) {
+    await addAccount(account.authConfig, account.alias, { allowMissingIdentity: true });
+  }
+
+  return { importedCount: backup.accounts.length };
+}
+
 /**
  * 添加新账号
  */
@@ -248,11 +363,13 @@ export async function addAccount(
   if (existingIndex >= 0) {
     const existingAccount = store.accounts[existingIndex];
     await saveAccountAuth(existingAccount.id, authConfig);
+    const workspaceMetadata = await fetchWorkspaceMetadata(existingAccount.id, store.config);
+    const enrichedAccountInfo = mergeWorkspaceMetadata(accountInfo, workspaceMetadata);
 
     // 更新现有账号
     store.accounts[existingIndex] = {
       ...existingAccount,
-      accountInfo,
+      accountInfo: enrichedAccountInfo,
       alias: alias || store.accounts[existingIndex].alias,
       updatedAt: now,
     };
@@ -284,10 +401,41 @@ export async function addAccount(
   };
   
   await saveAccountAuth(newAccount.id, authConfig);
+  const workspaceMetadata = await fetchWorkspaceMetadata(newAccount.id, store.config);
+  newAccount.accountInfo = mergeWorkspaceMetadata(newAccount.accountInfo, workspaceMetadata);
   store.accounts.push(newAccount);
   await saveAccountsStore(store);
   
   return newAccount;
+}
+
+export async function refreshAccountsWorkspaceMetadata(config: AppConfig): Promise<StoredAccount[]> {
+  const store = await loadAccountsStore();
+  let changed = false;
+
+  const updatedAccounts = await Promise.all(
+    store.accounts.map(async (account) => {
+      const metadata = await fetchWorkspaceMetadata(account.id, config);
+      const accountInfo = mergeWorkspaceMetadata(account.accountInfo, metadata);
+
+      if (JSON.stringify(accountInfo) === JSON.stringify(account.accountInfo)) {
+        return account;
+      }
+
+      changed = true;
+      return {
+        ...account,
+        accountInfo,
+      };
+    })
+  );
+
+  if (changed) {
+    store.accounts = updatedAccounts;
+    await saveAccountsStore(store);
+  }
+
+  return changed ? updatedAccounts : store.accounts;
 }
 
 /**

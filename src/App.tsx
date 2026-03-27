@@ -3,6 +3,12 @@ import { useAccountStore } from './stores/useAccountStore';
 import { useAutoRefresh } from './hooks';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import type { StoredAccount } from './types';
+import type {
+  AccountFilterState,
+  LimitFilterValue,
+  PlanFilterValue,
+} from './types/accountFilters';
 import {
   exportAccountsBackup,
   importAccountsBackup,
@@ -10,7 +16,12 @@ import {
   type AddAccountOptions,
 } from './utils/storage';
 import {
+  getAccountExpiryBucket,
+  isAccountExpired,
+} from './utils/accountStatus';
+import {
   AccountCard,
+  AccountFilters,
   AddAccountModal,
   ConfirmDialog,
   EmptyState,
@@ -19,6 +30,18 @@ import {
   StatsSummary,
   Toast,
 } from './components';
+import { DEFAULT_ACCOUNT_FILTERS } from './types/accountFilters';
+
+function matchesLimitFilter(
+  value: number | undefined,
+  filter: LimitFilterValue
+): boolean {
+  if (filter === 'all') return true;
+  if (typeof value !== 'number') return false;
+  if (filter === '0-33') return value <= 33;
+  if (filter === '33-66') return value > 33 && value <= 66;
+  return value > 66;
+}
 
 function App() {
   const {
@@ -44,6 +67,7 @@ function App() {
   const [shouldInitialRefresh, setShouldInitialRefresh] = useState(false);
   const [hasLoadedAccounts, setHasLoadedAccounts] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'warning' } | null>(null);
+  const [filters, setFilters] = useState<AccountFilterState>(DEFAULT_ACCOUNT_FILTERS);
   const autoImportInFlightRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | 'all' | null>(null);
@@ -175,7 +199,7 @@ function App() {
     }
   };
 
-  const handleSyncAccount = async () => {
+  const syncCurrentCodexAccount = async (): Promise<boolean> => {
     try {
       const authJson = await invoke<string>('read_codex_auth');
       try {
@@ -184,16 +208,22 @@ function App() {
         if (isMissingIdentityError(error)) {
           setIdentityConfirm({ isOpen: true, authJson, source: 'sync' });
           clearError();
-          return;
+          return false;
         }
         throw error;
       }
       // 同步完成后立即更新激活状态并刷新用量
       await syncCurrentAccount();
       setShouldInitialRefresh(true);
+      return true;
     } catch {
       setError('未找到当前Codex配置文件。请确保已登录Codex。');
+      return false;
     }
+  };
+
+  const handleSyncAccount = async () => {
+    await syncCurrentCodexAccount();
   };
 
   const handleImportBackup = async () => {
@@ -326,6 +356,42 @@ function App() {
     await updateConfig({ proxyEnabled: !config.proxyEnabled });
   };
 
+  const handleSwitchAccount = async (account: StoredAccount) => {
+    if (isAccountExpired(account)) {
+      const synced = await syncCurrentCodexAccount();
+      if (synced) {
+        showToast('目标账号已过期，已同步当前 Codex 登录账号', 'warning');
+      }
+      return;
+    }
+
+    await switchToAccount(account.id);
+  };
+
+  const availablePlanTypes: Array<Exclude<PlanFilterValue, 'all'>> = (
+    ['free', 'plus', 'pro', 'team'] as const
+  ).filter((plan) => accounts.some((account) => account.accountInfo.planType === plan));
+
+  const filteredAccounts = accounts.filter((account) => {
+    if (filters.plan !== 'all' && account.accountInfo.planType !== filters.plan) {
+      return false;
+    }
+
+    if (filters.expiry !== 'all' && getAccountExpiryBucket(account) !== filters.expiry) {
+      return false;
+    }
+
+    if (!matchesLimitFilter(account.usageInfo?.weeklyLimit?.percentLeft, filters.weekly)) {
+      return false;
+    }
+
+    if (!matchesLimitFilter(account.usageInfo?.fiveHourLimit?.percentLeft, filters.hourly)) {
+      return false;
+    }
+
+    return true;
+  });
+
   const activeAccount = accounts.find((account) => account.isActive);
   const activeName = activeAccount
     ? activeAccount.alias || activeAccount.accountInfo.email.split('@')[0]
@@ -405,34 +471,56 @@ function App() {
           {accounts.length > 0 && (
             <>
               <div className="dash-card p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-3">
                     <h2 className="text-sm font-semibold text-[var(--dash-text-primary)]">账号列表</h2>
+                    <span className="text-xs text-[var(--dash-text-muted)]">
+                      共 {accounts.length} 个
+                    </span>
                   </div>
-                  <span className="text-xs text-[var(--dash-text-muted)]">
-                    共 {accounts.length} 个
-                  </span>
+                  <AccountFilters
+                    filters={filters}
+                    availablePlanTypes={availablePlanTypes}
+                    filteredCount={filteredAccounts.length}
+                    totalCount={accounts.length}
+                    onChange={(next) => setFilters((current) => ({ ...current, ...next }))}
+                    onClear={() => setFilters({ ...DEFAULT_ACCOUNT_FILTERS })}
+                  />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {accounts.map((account, index) => (
-                    <div
-                      key={account.id}
-                      className="animate-fade-in h-full"
-                      style={{ animationDelay: `${index * 50}ms` }}
+                {filteredAccounts.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[var(--dash-border)] bg-slate-50/70 px-4 py-10 text-center">
+                    <p className="text-sm font-medium text-[var(--dash-text-primary)]">没有匹配当前筛选条件的账号</p>
+                    <p className="text-xs text-[var(--dash-text-muted)] mt-2">调整筛选条件后会立即更新列表</p>
+                    <button
+                      type="button"
+                      onClick={() => setFilters({ ...DEFAULT_ACCOUNT_FILTERS })}
+                      className="mt-4 h-9 px-4 rounded-full border border-[var(--dash-border)] bg-white text-sm text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 transition-colors"
                     >
-                      <AccountCard
-                        account={account}
-                        onSwitch={() => switchToAccount(account.id)}
-                        onDelete={() => handleDeleteClick(account.id, account.alias)}
-                        onRefresh={() => handleRefresh(account.id)}
-                        isRefreshing={isRefreshing}
-                        isRefreshingSelf={
-                          isRefreshing && (refreshingAccountId === account.id || refreshingAccountId === 'all')
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
+                      清空筛选
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {filteredAccounts.map((account, index) => (
+                      <div
+                        key={account.id}
+                        className="animate-fade-in h-full"
+                        style={{ animationDelay: `${index * 50}ms` }}
+                      >
+                        <AccountCard
+                          account={account}
+                          onSwitch={() => handleSwitchAccount(account)}
+                          onDelete={() => handleDeleteClick(account.id, account.alias)}
+                          onRefresh={() => handleRefresh(account.id)}
+                          isRefreshing={isRefreshing}
+                          isRefreshingSelf={
+                            isRefreshing && (refreshingAccountId === account.id || refreshingAccountId === 'all')
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -491,7 +579,7 @@ function App() {
       {/* 底部状态栏 */}
       <footer className="fixed bottom-0 left-0 right-0 bg-white/70 border-t border-[var(--dash-border)] py-2 px-5 backdrop-blur z-40">
         <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-[var(--dash-text-muted)]">
-          <span>Codex Manager v0.1.4</span>
+          <span>Codex Manager v0.1.5</span>
           <span>数据存储于本地</span>
         </div>
       </footer>

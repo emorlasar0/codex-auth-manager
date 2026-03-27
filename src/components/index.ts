@@ -1,4 +1,5 @@
 export { AccountCard } from './AccountCard';
+export { AccountFilters } from './AccountFilters';
 export { AddAccountModal } from './AddAccountModal';
 export { ConfirmDialog } from './ConfirmDialog';
 export { EmptyState } from './EmptyState';

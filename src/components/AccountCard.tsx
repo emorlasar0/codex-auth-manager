@@ -1,6 +1,7 @@
 import React from 'react';
 import type { StoredAccount } from '../types';
 import UsageBar from './UsageBar';
+import { getSubscriptionPresentation } from '../utils/accountStatus';
 
 interface AccountCardProps {
   account: StoredAccount;
@@ -119,6 +120,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
 
   const weeklyResetText = normalizeWeeklyReset(weeklyReset);
   const fiveHourResetText = normalizeFiveHourReset(fiveHourReset);
+  const subscriptionInfo = getSubscriptionPresentation(accountInfo.subscriptionActiveUntil);
 
   const formatLastRefreshed = (value?: string) => {
     if (!value) return null;
@@ -225,25 +227,6 @@ export const AccountCard: React.FC<AccountCardProps> = ({
 
       <div className="space-y-3">
         <div className="space-y-2">
-          <div className="flex items-baseline gap-2 min-w-0 flex-nowrap">
-            <span className="text-xs text-[var(--dash-text-muted)] shrink-0">周限额</span>
-            {weeklyResetText && (
-              <span className="text-[10px] text-[var(--dash-text-muted)] truncate max-w-[120px]">
-                {weeklyResetText}
-              </span>
-            )}
-            <span className="ml-auto text-lg font-semibold text-[var(--dash-text-primary)] shrink-0">
-              {weeklyLeft !== undefined ? `${weeklyLeft}%` : '--'}
-            </span>
-          </div>
-          {hasUsage ? (
-            <UsageBar label="周限额" showLabel={false} percentLeft={weeklyLeft ?? 0} />
-          ) : (
-            <div className="h-1.5 bg-slate-100 rounded-full" />
-          )}
-        </div>
-
-        <div className="space-y-2">
           <div className="flex items-baseline gap-2">
             <span className="text-xs text-[var(--dash-text-muted)]">5h 限额</span>
             {fiveHourResetText && (
@@ -263,6 +246,25 @@ export const AccountCard: React.FC<AccountCardProps> = ({
         </div>
 
         <div className="space-y-2">
+          <div className="flex items-baseline gap-2 min-w-0 flex-nowrap">
+            <span className="text-xs text-[var(--dash-text-muted)] shrink-0">周限额</span>
+            {weeklyResetText && (
+              <span className="text-[10px] text-[var(--dash-text-muted)] truncate max-w-[120px]">
+                {weeklyResetText}
+              </span>
+            )}
+            <span className="ml-auto text-lg font-semibold text-[var(--dash-text-primary)] shrink-0">
+              {weeklyLeft !== undefined ? `${weeklyLeft}%` : '--'}
+            </span>
+          </div>
+          {hasUsage ? (
+            <UsageBar label="周限额" showLabel={false} percentLeft={weeklyLeft ?? 0} />
+          ) : (
+            <div className="h-1.5 bg-slate-100 rounded-full" />
+          )}
+        </div>
+
+        <div className="space-y-2">
           <div className="flex items-baseline justify-between">
             <span className="text-xs text-[var(--dash-text-muted)]">代码审查限额</span>
             <span className="text-lg font-semibold text-[var(--dash-text-primary)]">
@@ -274,6 +276,24 @@ export const AccountCard: React.FC<AccountCardProps> = ({
           ) : (
             <div className="h-1.5 bg-slate-100 rounded-full" />
           )}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-baseline gap-2 min-w-0 flex-nowrap">
+            <span className="text-xs text-[var(--dash-text-muted)] shrink-0">订阅到期</span>
+            <span className="text-[10px] text-[var(--dash-text-muted)] truncate max-w-[120px]">
+              {subscriptionInfo.detailText}
+            </span>
+            <span className="ml-auto text-lg font-semibold text-[var(--dash-text-primary)] shrink-0">
+              {subscriptionInfo.valueText}
+            </span>
+          </div>
+          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div
+              className={`h-full ${subscriptionInfo.barClassName} transition-all duration-300 ease-out rounded-full`}
+              style={{ width: `${subscriptionInfo.barPercent}%` }}
+            />
+          </div>
         </div>
 
         {usageInfo?.status && usageInfo.status !== 'ok' && !isErrorAccount && (

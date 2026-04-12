@@ -25,7 +25,7 @@ import {
   type LimitFilterValue,
   type PlanFilterValue,
 } from './types/accountFilters';
-import { getAccountExpiryBucket, isAccountExpired } from './utils/accountStatus';
+import { getAccountExpiryBucket, getSubscriptionExpirationState } from './utils/accountStatus';
 import {
   exportAccountsBackup,
   importAccountsBackup,
@@ -635,7 +635,10 @@ function App() {
   };
 
   const handleSwitchAccount = async (account: StoredAccount) => {
-    if (isAccountExpired(account)) {
+    const isSubscriptionExpired =
+      getSubscriptionExpirationState(account.accountInfo.subscriptionActiveUntil) === 'expired';
+
+    if (isSubscriptionExpired) {
       const synced = await syncCurrentCodexAccount();
       if (synced) {
         showToast('目标账号已过期，已同步当前 Codex 登录账号', 'warning');

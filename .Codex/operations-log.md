@@ -155,3 +155,45 @@
 - 影响：`explorer.exe` 收到无效的 shell 目标后，没有启动 Codex App，而是回退打开了资源管理器目录。
 - 修复：将目标改为 `shell:AppsFolder\OpenAI.Codex_...!App`，保持 `PackageFamily!AppId` 的正确格式。
 - 补充验证：本地已验证格式化后的目标字符串正确输出为 `shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App`。
+
+## 编码前检查 - 0.2.0 发版
+时间：2026-04-22 15:01:30
+
+□ 已查阅上下文摘要文件：.Codex/context-summary-release-0.2.0.md
+□ 将使用以下可复用组件：
+  - package.json / package-lock.json：统一前端版本元数据
+  - src-tauri/Cargo.toml / Cargo.lock / tauri.conf.json：统一桌面端与安装包版本
+  - src/App.tsx / src/components/SettingsModal.tsx：同步界面展示版本
+  - .github/workflows/windows-build.yml：复用既有 Windows 打包流程
+□ 将遵循命名约定：Release tag 使用 v0.2.0，Release 标题使用 Codex Manager v0.2.0
+□ 将遵循代码风格：版本文案保持精炼；Release 内容延续历史短列表风格
+□ 确认不重复造轮子，证明：已复查 v0.1.8 / v0.1.9 发布模式与现有 workflow，无需新增发布脚本
+
+## 编码后声明 - 0.2.0 发版
+时间：2026-04-22 15:03:54
+
+### 1. 复用了以下既有组件
+- package.json / package-lock.json：统一前端语义化版本与 npm 锁文件根版本。
+- src-tauri/Cargo.toml / Cargo.lock / tauri.conf.json：统一 Rust 根包与安装包元数据版本。
+- src/App.tsx / src/components/SettingsModal.tsx：同步界面中的版本展示，避免 UI 与安装包版本不一致。
+- .github/workflows/windows-build.yml：继续复用现有 Windows 构建流程，无新增发布脚本。
+
+### 2. 遵循了以下项目约定
+- Release tag 采用 `v0.2.0`，标题继续使用 `Codex Manager v0.2.0`。
+- Release 正文保持历史版本的精炼条目式风格，聚焦用户可感知更新。
+- 版本号同步覆盖前端、Tauri、Rust 锁文件与界面文案，没有保留旧版硬编码展示。
+
+### 3. 对比了以下相似实现
+- 相比 `v0.1.9`：继续使用“更新内容：”风格，但本次突出小工具入口、切换账号重启反馈和 Codex App 唤醒修复。
+- 相比 `v0.1.8`：保留简洁的修复摘要结构，不额外堆叠内部技术细节。
+- 相比既有 workflow：保持 `push -> GitHub Actions -> 下载 artifact -> 创建 Release` 的发布链路不变。
+
+### 4. 未重复造轮子的证明
+- 已检查历史 Release 与现有 workflow，确认无需新增脚本或额外发布通道。
+- 版本更新仅落在既有元数据文件与 UI 文案位置，没有引入新的配置源。
+
+### 5. 本地验证结果
+- `npm run lint`：通过
+- `npm run build`：通过
+- `cargo fmt --all`：通过
+- `cargo check --lib`：失败，原因仍为当前环境缺少 MSVC `link.exe`

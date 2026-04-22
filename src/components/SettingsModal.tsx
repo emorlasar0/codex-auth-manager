@@ -167,7 +167,7 @@ function SettingsModalContent({ config, onClose, onSave }: Omit<SettingsModalPro
           <div className="pt-4 border-t border-slate-200">
             <h3 className="text-[var(--dash-text-secondary)] text-xs font-medium mb-2">关于</h3>
             <div className="space-y-1 text-sm text-[var(--dash-text-secondary)]">
-              <p>Codex Manager v0.1.6</p>
+              <p>Codex Manager v0.2.0</p>
               <p className="text-xs text-[var(--dash-text-muted)]">
                 管理多个 OpenAI Codex 账号的桌面工具
               </p>

@@ -1071,7 +1071,7 @@ function App() {
 
       <footer className="fixed bottom-0 left-0 right-0 bg-white/70 border-t border-[var(--dash-border)] py-2 px-5 backdrop-blur z-40">
         <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-[var(--dash-text-muted)]">
-          <span>Codex Manager v0.1.6</span>
+          <span>Codex Manager v0.2.0</span>
           <span>数据存储于本地</span>
         </div>
       </footer>

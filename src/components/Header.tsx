@@ -150,7 +150,7 @@ export const Header: React.FC<HeaderProps> = ({
 
                     <div className="my-3 h-px bg-[var(--dash-border)]" />
 
-                    <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-3">
+                    <div className="flex items-center justify-between gap-3 px-1">
                       <div className="min-w-0">
                         <p className="text-sm text-[var(--dash-text-primary)]">切换账号后自动重启 Codex</p>
                         <p className="text-xs text-[var(--dash-text-muted)] mt-1 leading-5">
@@ -163,14 +163,14 @@ export const Header: React.FC<HeaderProps> = ({
                           void onToggleAutoRestartCodex();
                         }}
                         disabled={isLoading}
-                        className={`relative h-8 w-14 rounded-full transition-colors ${
-                          isAutoRestartCodexOnSwitch ? 'bg-blue-500' : 'bg-slate-200'
+                        className={`relative h-8 w-14 flex-shrink-0 rounded-full transition-colors ${
+                          isAutoRestartCodexOnSwitch ? 'bg-emerald-500' : 'bg-slate-200'
                         } disabled:opacity-50`}
                         aria-pressed={isAutoRestartCodexOnSwitch}
                         title={isAutoRestartCodexOnSwitch ? '已启用自动重启' : '已关闭自动重启'}
                       >
                         <span
-                          className={`absolute top-1 left-1 h-6 w-6 bg-white rounded-full shadow transition-transform ${
+                          className={`absolute top-1 left-1 h-6 w-6 rounded-full bg-white shadow transition-transform ${
                             isAutoRestartCodexOnSwitch ? 'translate-x-6' : 'translate-x-0'
                           }`}
                         />

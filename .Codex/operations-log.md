@@ -147,3 +147,11 @@
 - 根因：Rust `format!` 包裹的 PowerShell 脚本里新增了 `shell:AppsFolder\{0}!{1}`，但未对花括号做转义，导致 GitHub Actions 在编译 `src-tauri/src/lib.rs` 时出现 `invalid reference to positional argument 1`。
 - 补救：将脚本字符串修正为 `shell:AppsFolder\{{0}}!\{{1}}`，保留 PowerShell 自身的 `-f` 格式化语义，同时避免 Rust `format!` 抢先解释占位符。
 - 补救后重新执行本地 `cargo fmt --all`、`npm run lint`、`npm run build`，均已通过，随后重新提交并推送触发新的 Windows 打包。
+## 快速修复 - Codex App 打开成文档文件夹
+时间：2026-04-22 15:12:00
+
+- 用户实测反馈：切换账号后没有正常打开 Codex，而是打开了用户文档文件夹。
+- 根因定位：`src-tauri/src/lib.rs` 中 AppX 唤醒目标被拼成了 `shell:AppsFolder\OpenAI.Codex_...!\App`，在 `!` 后面多了一个反斜杠。
+- 影响：`explorer.exe` 收到无效的 shell 目标后，没有启动 Codex App，而是回退打开了资源管理器目录。
+- 修复：将目标改为 `shell:AppsFolder\OpenAI.Codex_...!App`，保持 `PackageFamily!AppId` 的正确格式。
+- 补充验证：本地已验证格式化后的目标字符串正确输出为 `shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App`。

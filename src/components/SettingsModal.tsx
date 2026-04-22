@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import type { AppConfig } from '../types';
 
 interface SettingsModalProps {
@@ -8,29 +8,13 @@ interface SettingsModalProps {
   onSave: (config: Partial<AppConfig>) => Promise<void>;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({
-  isOpen,
-  config,
-  onClose,
-  onSave,
-}) => {
+function SettingsModalContent({ config, onClose, onSave }: Omit<SettingsModalProps, 'isOpen'>) {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(config.autoRefreshInterval);
   const [codexPath, setCodexPath] = useState(config.codexPath);
   const [closeBehavior, setCloseBehavior] = useState(config.closeBehavior);
   const [proxyEnabled, setProxyEnabled] = useState(config.proxyEnabled);
   const [proxyUrl, setProxyUrl] = useState(config.proxyUrl);
   const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setAutoRefreshInterval(config.autoRefreshInterval);
-    setCodexPath(config.codexPath);
-    setCloseBehavior(config.closeBehavior);
-    setProxyEnabled(config.proxyEnabled);
-    setProxyUrl(config.proxyUrl);
-  }, [isOpen, config.autoRefreshInterval, config.codexPath, config.closeBehavior, config.proxyEnabled, config.proxyUrl]);
-
-  if (!isOpen) return null;
 
   const handleSave = async () => {
     const normalizedAutoRefreshInterval =
@@ -69,7 +53,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="space-y-5">
-          {/* 自动刷新间隔 */}
           <div>
             <label className="block text-[var(--dash-text-secondary)] text-xs font-medium mb-2">
               自动刷新间隔
@@ -93,7 +76,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </p>
           </div>
 
-          {/* 代理设置 */}
           <div className="pt-4 border-t border-slate-200 space-y-3">
             <div>
               <label className="block text-[var(--dash-text-secondary)] text-xs font-medium mb-1.5">
@@ -143,7 +125,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* 代理设置 */}
           <div className="pt-4 border-t border-slate-200 space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -183,7 +164,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* 关于 */}
           <div className="pt-4 border-t border-slate-200">
             <h3 className="text-[var(--dash-text-secondary)] text-xs font-medium mb-2">关于</h3>
             <div className="space-y-1 text-sm text-[var(--dash-text-secondary)]">
@@ -198,7 +178,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
-        {/* 操作按钮 */}
         <div className="flex gap-2 mt-5">
           <button
             onClick={onClose}
@@ -216,6 +195,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
       </div>
     </div>
+  );
+}
+
+export const SettingsModal: React.FC<SettingsModalProps> = ({
+  isOpen,
+  config,
+  onClose,
+  onSave,
+}) => {
+  if (!isOpen) return null;
+
+  const modalKey = [
+    config.autoRefreshInterval,
+    config.codexPath,
+    config.closeBehavior,
+    config.proxyEnabled,
+    config.proxyUrl,
+  ].join('|');
+
+  return (
+    <SettingsModalContent
+      key={modalKey}
+      config={config}
+      onClose={onClose}
+      onSave={onSave}
+    />
   );
 };
 

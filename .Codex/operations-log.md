@@ -1,82 +1,50 @@
-# operations-log
+﻿# 操作日志
 
-## 工具与流程说明
-时间：2026-04-20 11:08:37
+## 本次代码审查
+时间：2026-04-22 09:17:55
 
-- 仓库要求中提到的 `sequential-thinking`、`shrimp-task-manager`、`context7`、`github.search_code`、`desktop-commander` 在当前会话不可用。
-- 替代方案：
-  - 使用 `git`、GitHub API、工作流文件与提交历史完成上下文检索。
-  - 使用本地 PowerShell 与现有构建工具完成验证。
-  - 所有证据均保存在本地 `.Codex/` 文件中。
+### 工具与过程记录
+- sequential-thinking、shrimp-task-manager、desktop-commander、context7、github.search_code 在当前会话中不可用；本次改用本地代码检索、分段阅读与命令行验证完成审查。
+- 已完成本地上下文扫描：src/、src-tauri/src/、package.json、现有 Rust 单元测试。
+- 已分析的核心实现：
+  - /src/stores/useAccountStore.ts
+  - /src/hooks/useAutoRefresh.ts
+  - /src/utils/storage.ts
+  - /src/App.tsx
+  - /src-tauri/src/lib.rs
+- 已确认项目内缺少业务测试文件；仅有 Rust 单元测试。
 
-## 编码前检查 - PR11 审查与发版
-时间：2026-04-20 11:08:37
+### 编码前检查（本任务为审查，未修改代码）
+- 已查阅上下文摘要文件：.Codex/context-summary-code-review.md
+- 已识别复用组件：loadAccountsStore、syncCurrentAccount、efreshSingleAccount、get_codex_wham_usage
+- 已识别命名与风格：前端 camelCase / Rust snake_case + serde rename
+- 已确认核心风险：状态竞态、同邮箱多账号匹配退化、过期 access_token 被误报为账号过期
 
-□ 已查阅上下文摘要文件：`.Codex/context-summary-pr11-merge-release.md`
-□ 将使用以下可复用组件：
-  - release workflow：`.github/workflows/release.yml` - 复用既有发版格式
-  - 版本号同步：`package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json`
-  - 贡献归属模式：历史提交 `d7a5390`、`816625e`
-□ 将遵循命名约定：保留 `Merge PR #11: ...` 与 `v0.1.9` 标签格式
-□ 将遵循代码风格：中文发版说明、多行 bullet、最小改动原则
-□ 确认不重复造轮子，证明：已检查现有 Release workflow、既有标签和合并提交模式，不新增自定义发版脚本
+### 关键结论留痕
+1. Rust 托盘/后台刷新使用的 store 结构体是“裁剪版”，按代码推断会在保存时丢失前端需要的身份字段。
+2. loadAccounts() 存在异步覆盖，能解释“账号突然出现又消失再出现”的抖动。
+3. wham/usage 请求直接使用存档 access_token，401 被直接标记为 expired，能解释“之前成功、后来突然变过期”。
+4. 自动刷新防抖逻辑会把被跳过的刷新当成已完成，导致切换账号后不补刷。
+## 修复执行记录
+时间：2026-04-22 09:55:22
 
-## 审查与发现
-时间：2026-04-20 11:08:37
+### 本轮修复内容
+1. 修复 Rust 端 `src-tauri/src/lib.rs` 的结构体重复定义与非法 Unicode 转义，恢复 `cargo fmt --all` 可执行。
+2. 修复前端状态链：
+   - `src/stores/useAccountStore.ts` 为新增/删除/切换账号引入加载请求失效机制，避免旧的 `loadAccounts()` 结果覆盖新状态。
+   - `src/utils/storage.ts` 调整新增账号的落盘逻辑，改为在网络元数据返回后重新读取最新 store 再合并，避免把并发写入覆盖掉。
+   - `src/utils/storage.ts` 删除账号时在必要场景下补选新的激活账号，减少 UI 空激活抖动。
+   - `src/utils/storage.ts` 备份导入校验改为要求完整 token 集，避免导入半残 auth 快照。
+3. 修复 `src/App.tsx` 的空 `catch`，使 eslint 重新通过。
 
-1. 通过 GitHub API 确认目标为 `PR #11`：
-   - 地址：`https://github.com/RioArisk/codex-auth-manager/pull/11`
-   - 标题：`feat: Free account support`
-   - 作者：`@cjy0812`
-   - 状态：`open`
-2. 读取 PR 改动后发现关键阻塞项：
-   - PR 修改了 `package.json` 依赖版本，但没有同步 `package-lock.json`。
-   - 本地执行 `npm ci` 直接失败，说明 CI / Release workflow 同样会失败。
-3. 结论：PR 思路可接受，但必须先补齐锁文件同步后再合并发版。
+### 验证留痕
+- `npm run lint`：通过
+- `npm run build`：通过
+- `cargo fmt --all`：通过
+- `cargo check --lib`：失败，原因是当前机器缺少 `link.exe`（MSVC 工具链）
+- `cargo test --lib`：失败，原因同上
 
-## 执行动作
-时间：2026-04-20 11:08:37
-
-1. 新建本地审查分支 `codex/pr11-review-release`，合并 PR 做验证。
-2. 本地验证确认：
-   - `npm ci` 失败，原因为锁文件不同步。
-   - 直接执行前端构建工具后，PR 触达前端文件可通过构建。
-   - Rust 工具链最初缺失，随后安装了 `rustup`。
-   - 由于缺少 MSVC `link.exe`，无法完成 `cargo check/test` 的链接级验证。
-3. 回到 `main`，按用户要求使用 `RioArisk <202010604205@stu.kust.edu.cn>` 完成正式合并。
-4. 合并后执行：
-   - `npm version 0.1.9 --no-git-tag-version`
-   - `npm install` / `npm ci` 同步锁文件
-   - 更新 `src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json`
-   - 更新 `.github/workflows/release.yml` 的 release 文案，并带上 `PR #11 by @cjy0812`
-
-## Actions 二次复盘
-时间：2026-04-20 11:08:37
-
-- 首次推送 `v0.1.9` 后，Release run `24646446027` 失败。
-- 通过公开 Actions 页面确认失败注解：`tauri-action` 执行了 `pnpm tauri build`。
-- 根因：PR 带入了 `pnpm-lock.yaml`，导致 `tauri-action` 自动识别包管理器为 pnpm；但仓库 workflow 实际使用的是 `npm ci`。
-- 修复：删除 `pnpm-lock.yaml`，保留并继续使用 `package-lock.json`。
-- 处理策略：由于 `v0.1.9` 尚未生成 Release，对同一版本重新打标签，避免无意义跳号。
-
-## 编码后声明 - PR11 审查与 v0.1.9 发版
-时间：2026-04-20 11:08:37
-
-### 1. 复用了以下既有组件
-- `.github/workflows/release.yml`：沿用既有 Release 触发与文案格式
-- `package.json` / `Cargo.toml` / `tauri.conf.json`：沿用现有版本同步方式
-- PR 合并模式：沿用历史 `Merge PR #编号` 的命名模式
-
-### 2. 遵循了以下项目约定
-- 命名约定：版本统一为 `0.1.9` / 标签 `v0.1.9`
-- 代码风格：发布说明与日志保持简体中文
-- 文件组织：所有审查材料写入仓库本地 `.Codex/`
-
-### 3. 对比了以下相似实现
-- `v0.1.8`：同样通过修改 workflow releaseBody 与版本文件完成发版
-- `d7a5390`：参考其 `Merge PR #4` 合并方式
-- `816625e`：参考其贡献归属补记思路，本次直接在发布说明中带上 PR 作者
-
-### 4. 未重复造轮子的证明
-- 已检查 `.github/workflows/`、版本文件和历史标签，不新增额外发版脚本
-- 锁文件问题通过标准 `npm install` 修复，而不是手写锁文件
+### 风险复核
+- 已覆盖“添加账号先出现后消失”的主要竞态链：旧加载覆盖新落盘。
+- 已覆盖“非当前账号突然被判定 token 过期”的主要判定链：Rust 侧区分当前账号失效与缓存 token 失效。
+- 仍未补齐自动化业务测试；后续建议在可用 Rust/桌面环境下补跑 Tauri 侧验证。

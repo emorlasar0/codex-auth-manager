@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { StoredAccount, AccountsStore, AppConfig, UsageInfo } from '../types';
+import type { StoredAccount, AccountsStore, AppConfig, UsageInfo, CodexAuthConfig } from '../types';
 import {
   loadAccountsStore,
   saveAccountsStore,
@@ -14,14 +14,12 @@ import {
 } from '../utils/storage';
 
 interface AccountState {
-  // 状态
   accounts: StoredAccount[];
   activeAccountId: string | null;
   config: AppConfig;
   isLoading: boolean;
   error: string | null;
-  
-  // Actions
+
   loadAccounts: () => Promise<void>;
   syncCurrentAccount: () => Promise<void>;
   addAccount: (authJson: string, alias?: string, options?: AddAccountOptions) => Promise<void>;
@@ -34,190 +32,171 @@ interface AccountState {
   clearError: () => void;
 }
 
-export const useAccountStore = create<AccountState>((set, get) => ({
+const DEFAULT_CONFIG: AppConfig = {
+  autoRefreshInterval: 30,
+  codexPath: 'codex',
+  closeBehavior: 'ask',
+  theme: 'dark',
+  hasInitialized: false,
+  proxyEnabled: false,
+  proxyUrl: 'http://127.0.0.1:7890',
+};
+
+function buildStateFromStore(store: AccountsStore) {
+  const activeAccount = store.accounts.find((account) => account.isActive);
+  return {
+    accounts: store.accounts,
+    activeAccountId: activeAccount?.id ?? null,
+    config: { ...DEFAULT_CONFIG, ...store.config },
+  };
+}
+
+let latestLoadRequestId = 0;
+
+function invalidatePendingLoads(): void {
+  latestLoadRequestId += 1;
+}
+
+export const useAccountStore = create<AccountState>((set) => ({
   accounts: [],
   activeAccountId: null,
-  config: {
-    autoRefreshInterval: 30,
-    codexPath: 'codex',
-    closeBehavior: 'ask',
-    theme: 'dark',
-    hasInitialized: false,
-    proxyEnabled: false,
-    proxyUrl: 'http://127.0.0.1:7890',
-  },
+  config: DEFAULT_CONFIG,
   isLoading: false,
   error: null,
-  
-  loadAccounts: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      const store = await loadAccountsStore();
-      const activeAccount = store.accounts.find(a => a.isActive);
-      set({ 
-        accounts: store.accounts, 
-        activeAccountId: activeAccount?.id || null,
-        config: store.config,
-        isLoading: false 
-      });
-      
-      // 加载后自动同步当前登录账号
-      await get().syncCurrentAccount();
 
-      const refreshedAccounts = await refreshAccountsWorkspaceMetadata(store.config);
-      const refreshedActiveAccount = refreshedAccounts.find((account) => account.isActive);
+  loadAccounts: async () => {
+    const requestId = ++latestLoadRequestId;
+    set({ isLoading: true, error: null });
+
+    try {
+      const initialStore = await loadAccountsStore();
+      await syncCurrent();
+      await refreshAccountsWorkspaceMetadata(initialStore.config);
+      const finalStore = await loadAccountsStore();
+
+      if (requestId !== latestLoadRequestId) {
+        return;
+      }
+
       set({
-        accounts: refreshedAccounts,
-        activeAccountId: refreshedActiveAccount?.id || get().activeAccountId,
+        ...buildStateFromStore(finalStore),
+        isLoading: false,
+        error: null,
       });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to load accounts' 
+      if (requestId !== latestLoadRequestId) {
+        return;
+      }
+
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to load accounts',
       });
     }
   },
-  
+
   syncCurrentAccount: async () => {
     try {
-      const matchedId = await syncCurrent();
-      
-      // 更新本地状态（包括未登录时清除所有激活状态）
-      const { accounts } = get();
-      const updatedAccounts = accounts.map(a => ({
-        ...a,
-        isActive: matchedId ? a.id === matchedId : false,
-      }));
-      
-      set({ 
-        accounts: updatedAccounts, 
-        activeAccountId: matchedId,
-      });
+      await syncCurrent();
+      const store = await loadAccountsStore();
+      set(buildStateFromStore(store));
     } catch (error) {
       console.error('Failed to sync current account:', error);
     }
   },
-  
+
   addAccount: async (authJson: string, alias?: string, options?: AddAccountOptions) => {
+    invalidatePendingLoads();
     set({ isLoading: true, error: null });
     try {
-      const authConfig = JSON.parse(authJson);
-      const newAccount = await addAccountToStore(authConfig, alias, options);
-      
-      // 更新本地状态
-      const { accounts } = get();
-      const existingIndex = accounts.findIndex(a => a.id === newAccount.id);
-      
-      if (existingIndex >= 0) {
-        const updated = [...accounts];
-        updated[existingIndex] = newAccount;
-        set({ accounts: updated, isLoading: false });
-      } else {
-        set({ 
-          accounts: [...accounts, newAccount],
-          activeAccountId: accounts.length === 0 ? newAccount.id : get().activeAccountId,
-          isLoading: false 
-        });
-      }
+      const authConfig = JSON.parse(authJson) as CodexAuthConfig;
+      await addAccountToStore(authConfig, alias, options);
+      const store = await loadAccountsStore();
+      set({
+        ...buildStateFromStore(store),
+        isLoading: false,
+        error: null,
+      });
     } catch (error) {
       if (isMissingIdentityError(error)) {
         set({ isLoading: false, error: null });
         throw error;
       }
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to add account' 
+
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to add account',
       });
       throw error;
     }
   },
-  
+
   removeAccount: async (accountId: string) => {
+    invalidatePendingLoads();
     set({ isLoading: true, error: null });
     try {
       await removeAccountFromStore(accountId);
-      const { accounts, activeAccountId } = get();
-      const newAccounts = accounts.filter(a => a.id !== accountId);
-      
-      // 如果删除的是活动账号，切换到第一个账号
-      let newActiveId = activeAccountId;
-      if (activeAccountId === accountId) {
-        newActiveId = newAccounts[0]?.id || null;
-      }
-      
-      set({ 
-        accounts: newAccounts, 
-        activeAccountId: newActiveId,
-        isLoading: false 
+      const store = await loadAccountsStore();
+      set({
+        ...buildStateFromStore(store),
+        isLoading: false,
+        error: null,
       });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to remove account' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to remove account',
       });
     }
   },
-  
+
   switchToAccount: async (accountId: string) => {
+    invalidatePendingLoads();
     set({ isLoading: true, error: null });
     try {
       await switchAccount(accountId);
-      
-      // 更新本地状态
-      const { accounts } = get();
-      const updatedAccounts = accounts.map(a => ({
-        ...a,
-        isActive: a.id === accountId,
-      }));
-      
-      set({ 
-        accounts: updatedAccounts, 
-        activeAccountId: accountId,
-        isLoading: false 
+      const store = await loadAccountsStore();
+      set({
+        ...buildStateFromStore(store),
+        isLoading: false,
+        error: null,
       });
     } catch (error) {
-      set({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Failed to switch account' 
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to switch account',
       });
     }
   },
-  
+
   updateUsage: async (accountId: string, usage: UsageInfo) => {
     try {
       await updateUsage(accountId, usage);
-      
-      const { accounts } = get();
-      const updatedAccounts = accounts.map(a => 
-        a.id === accountId ? { ...a, usageInfo: usage } : a
-      );
-      
-      set({ accounts: updatedAccounts });
+      const store = await loadAccountsStore();
+      set(buildStateFromStore(store));
     } catch (error) {
       console.error('Failed to update usage:', error);
     }
   },
-  
+
   updateConfig: async (config: Partial<AppConfig>) => {
-    const { accounts, config: currentConfig } = get();
-    const newConfig = { ...currentConfig, ...config };
-    
-    const store: AccountsStore = {
-      version: '1.0.0',
-      accounts,
-      config: newConfig,
+    const store = await loadAccountsStore();
+    const nextStore: AccountsStore = {
+      ...store,
+      config: {
+        ...store.config,
+        ...config,
+      },
     };
-    
-    await saveAccountsStore(store);
-    set({ config: newConfig });
+
+    await saveAccountsStore(nextStore);
+    set(buildStateFromStore(nextStore));
   },
-  
+
   refreshAllUsage: async () => {
-    // 这个功能需要依次切换账号并获取用量
-    // 由于codex /status需要交互式运行，这里暂时只是一个占位
     console.log('Refreshing all usage...');
   },
-  
+
   setError: (message: string) => set({ error: message }),
   clearError: () => set({ error: null }),
 }));

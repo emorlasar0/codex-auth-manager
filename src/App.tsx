@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -125,6 +125,16 @@ function App() {
   } | null>(null);
   const [quickLoginState, setQuickLoginState] = useState<QuickLoginState | null>(null);
 
+  const showToast = useCallback((message: string, tone: 'success' | 'warning' = 'success') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToast({ message, tone });
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+    }, 2200);
+  }, []);
+
   useEffect(() => {
     let active = true;
 
@@ -145,52 +155,87 @@ function App() {
   useEffect(() => {
     if (!hasLoadedAccounts) return;
 
-    if (accounts.length > 0) {
-      if (!config.hasInitialized) {
-        void updateConfig({ hasInitialized: true });
+    let cancelled = false;
+
+    const finishInitializing = () => {
+      if (!cancelled) {
+        setIsInitializing(false);
       }
-      setIsInitializing(false);
-      return;
-    }
+    };
 
-    if (config.hasInitialized || autoImportInFlightRef.current) {
-      setIsInitializing(false);
-      return;
-    }
+    const run = async () => {
+      if (accounts.length > 0) {
+        if (!config.hasInitialized) {
+          await updateConfig({ hasInitialized: true });
+        }
+        finishInitializing();
+        return;
+      }
 
-    autoImportInFlightRef.current = true;
-    setIsInitializing(true);
+      if (config.hasInitialized || autoImportInFlightRef.current) {
+        finishInitializing();
+        return;
+      }
 
-    const runAutoImport = async () => {
+      autoImportInFlightRef.current = true;
+      if (!cancelled) {
+        setIsInitializing(true);
+      }
+
       let authJson: string | null = null;
       try {
         authJson = await invoke<string>('read_codex_auth');
         await addAccount(authJson);
-        setShouldInitialRefresh(true);
+        if (!cancelled) {
+          setShouldInitialRefresh(true);
+        }
       } catch (currentError) {
-        if (authJson && isMissingIdentityError(currentError)) {
+        if (authJson && isMissingIdentityError(currentError) && !cancelled) {
           setIdentityConfirm({ isOpen: true, authJson, source: 'auto' });
           clearError();
         }
       } finally {
         try {
           await updateConfig({ hasInitialized: true });
-        } catch {
-          // 忽略初始化状态写入失败。
+        } catch (updateConfigError) {
+          console.warn('标记应用已初始化失败:', updateConfigError);
         }
-        setIsInitializing(false);
         autoImportInFlightRef.current = false;
+        finishInitializing();
       }
     };
 
-    void runAutoImport();
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
   }, [accounts.length, addAccount, clearError, config.hasInitialized, hasLoadedAccounts, updateConfig]);
 
   useEffect(() => {
     if (!shouldInitialRefresh || accounts.length === 0) return;
-    const targetId = accounts.find((account) => account.isActive)?.id ?? accounts[0].id;
-    void refreshSingleAccount(targetId);
-    setShouldInitialRefresh(false);
+
+    let cancelled = false;
+
+    const runInitialRefresh = async () => {
+      const targetId = accounts.find((account) => account.isActive)?.id ?? accounts[0].id;
+      try {
+        const result = await refreshSingleAccount(targetId);
+        if (!cancelled && result.status !== 'skipped') {
+          setShouldInitialRefresh(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setShouldInitialRefresh(false);
+        }
+      }
+    };
+
+    void runInitialRefresh();
+
+    return () => {
+      cancelled = true;
+    };
   }, [accounts, refreshSingleAccount, shouldInitialRefresh]);
 
   useEffect(() => {
@@ -296,7 +341,7 @@ function App() {
       unlistenBackgroundRefresh?.();
       unlistenFocusChange?.();
     };
-  }, [hasLoadedAccounts, loadAccounts, refreshSingleAccount, setError]);
+  }, [hasLoadedAccounts, loadAccounts, refreshSingleAccount, setError, showToast]);
 
   useEffect(() => {
     if (!hasLoadedAccounts) return;
@@ -305,16 +350,6 @@ function App() {
       console.error('Failed to refresh tray menu:', currentError);
     });
   }, [accounts, config.closeBehavior, hasLoadedAccounts]);
-
-  const showToast = (message: string, tone: 'success' | 'warning' = 'success') => {
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-    }
-    setToast({ message, tone });
-    toastTimerRef.current = setTimeout(() => {
-      setToast(null);
-    }, 2200);
-  };
 
   const handleAddAccount = async (authJson: string, alias?: string) => {
     try {
@@ -589,7 +624,9 @@ function App() {
             ? '缺少 ChatGPT account ID'
             : result.status === 'missing-token'
               ? '缺少 access token'
-              : result.status === 'no-codex-access'
+              : result.status === 'stale-token'
+                ? '\u8be5\u8d26\u53f7\u7f13\u5b58\u7684 access token \u5df2\u5931\u6548\uff0c\u8bf7\u5148\u5207\u6362\u5230\u8be5\u8d26\u53f7\u5e76\u91cd\u65b0\u5b8c\u6210\u4e00\u6b21 Codex \u767b\u5f55'
+            : result.status === 'no-codex-access'
                 ? '当前账号没有 Codex 权限'
                 : result.status === 'no-usage'
                   ? '未找到用量信息，请稍后重试'

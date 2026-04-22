@@ -77,25 +77,49 @@ struct TrayLimitSummary {
     reset_time: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct TrayContextWindowSummary {
+    percent_left: f64,
+    used: String,
+    total: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct TrayUsageSummary {
     status: Option<String>,
     message: Option<String>,
     plan_type: Option<String>,
+    context_window: Option<TrayContextWindowSummary>,
     five_hour_limit: Option<TrayLimitSummary>,
     weekly_limit: Option<TrayLimitSummary>,
     code_review_limit: Option<TrayLimitSummary>,
     last_updated: Option<String>,
+    source_file: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct TrayOrganization {
+    id: String,
+    title: String,
+    role: String,
+    is_default: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct TrayAccountInfo {
     email: String,
     plan_type: String,
+    account_id: Option<String>,
+    user_id: Option<String>,
+    account_user_id: Option<String>,
+    account_structure: Option<String>,
     workspace_name: Option<String>,
     subscription_active_until: Option<String>,
+    organizations: Option<Vec<TrayOrganization>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -190,6 +214,36 @@ fn save_accounts_store_data(store: &TrayAccountsStore) -> Result<(), String> {
     save_accounts_store(data)
 }
 
+fn persist_current_auth_to_matching_account() -> Result<(), String> {
+    let current_auth_json = match read_codex_auth() {
+        Ok(auth_json) => auth_json,
+        Err(_) => return Ok(()),
+    };
+
+    let current_auth: AuthConfig =
+        serde_json::from_str(&current_auth_json).map_err(|e| e.to_string())?;
+    let current_chatgpt_account_id = current_auth
+        .tokens
+        .as_ref()
+        .and_then(|tokens| tokens.account_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let Some(current_chatgpt_account_id) = current_chatgpt_account_id else {
+        return Ok(());
+    };
+
+    let store = load_accounts_store_data()?;
+    if let Some(account) = store.accounts.iter().find(|account| {
+        account.account_info.account_id.as_deref() == Some(current_chatgpt_account_id.as_str())
+    }) {
+        save_account_auth(account.id.clone(), current_auth_json)?;
+    }
+
+    Ok(())
+}
+
 fn normalize_tray_close_behavior(value: Option<&str>) -> &'static str {
     match value.unwrap_or_default() {
         "exit" => "exit",
@@ -227,10 +281,15 @@ fn build_tray_usage_summary(result: &UsageResult) -> TrayUsageSummary {
         status: Some(result.status.clone()),
         message: result.message.clone(),
         plan_type: result.plan_type.clone(),
+        context_window: None,
         five_hour_limit: None,
         weekly_limit: None,
         code_review_limit: None,
         last_updated: Some(now_epoch_ms_string()),
+        source_file: result
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.source_file.clone()),
     };
 
     if let Some(usage) = &result.usage {
@@ -354,6 +413,8 @@ fn switch_account_from_tray<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
 ) -> Result<(), String> {
+    persist_current_auth_to_matching_account()?;
+
     let auth_json = read_account_auth(account_id.to_string())?;
     write_codex_auth(auth_json)?;
 
@@ -371,7 +432,7 @@ fn switch_account_from_tray<R: Runtime>(
     }
 
     if !matched {
-        return Err("未找到目标账号".to_string());
+        return Err("\u{76ee}\u{6807}\u{8d26}\u{53f7}\u{4e0d}\u{5b58}\u{5728}".to_string());
     }
 
     save_accounts_store_data(&store)?;
@@ -502,7 +563,7 @@ fn should_run_background_auto_refresh(
 async fn refresh_accounts_usage_in_background<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<usize, String> {
-    let mut store = load_accounts_store_data()?;
+    let store = load_accounts_store_data()?;
     if store.accounts.is_empty() {
         return Ok(0);
     }
@@ -510,8 +571,9 @@ async fn refresh_accounts_usage_in_background<R: Runtime>(
     let proxy_enabled = store.config.proxy_enabled;
     let proxy_url = store.config.proxy_url.clone();
     let mut updated_count = 0usize;
+    let mut usage_updates: HashMap<String, TrayUsageSummary> = HashMap::new();
 
-    for account in store.accounts.iter_mut() {
+    for account in &store.accounts {
         let result = match get_codex_wham_usage(
             account.id.clone(),
             proxy_enabled,
@@ -532,10 +594,21 @@ async fn refresh_accounts_usage_in_background<R: Runtime>(
             updated_count += 1;
         }
 
-        account.usage_info = Some(build_tray_usage_summary(&result));
+        usage_updates.insert(account.id.clone(), build_tray_usage_summary(&result));
     }
 
-    save_accounts_store_data(&store)?;
+    let mut latest_store = load_accounts_store_data()?;
+    let mut changed = false;
+    for account in latest_store.accounts.iter_mut() {
+        if let Some(summary) = usage_updates.get(&account.id) {
+            account.usage_info = Some(summary.clone());
+            changed = true;
+        }
+    }
+
+    if changed {
+        save_accounts_store_data(&latest_store)?;
+    }
     refresh_tray_menu_internal(app)?;
 
     if let Some(window) = app.get_webview_window("main") {
@@ -734,17 +807,18 @@ fn validate_login_auth_json(auth_json: &str) -> Result<(), String> {
     let auth: AuthConfig = serde_json::from_str(auth_json).map_err(|e| e.to_string())?;
     let tokens = auth
         .tokens
-        .ok_or_else(|| "auth.json 缺少 tokens 字段".to_string())?;
+        .ok_or_else(|| "auth.json \u{7f3a}\u{5c11} tokens \u{5b57}\u{6bb5}".to_string())?;
 
-    if tokens
-        .id_token
-        .as_deref()
-        .unwrap_or_default()
-        .trim()
-        .is_empty()
-    {
-        return Err("auth.json 缺少 id_token".to_string());
-    }
+    take_non_empty_token(tokens.id_token, "auth.json \u{7f3a}\u{5c11} id_token")?;
+    take_non_empty_token(
+        tokens.access_token,
+        "auth.json \u{7f3a}\u{5c11} access_token",
+    )?;
+    take_non_empty_token(
+        tokens.refresh_token,
+        "auth.json \u{7f3a}\u{5c11} refresh_token",
+    )?;
+    take_non_empty_token(tokens.account_id, "auth.json \u{7f3a}\u{5c11} account_id")?;
 
     Ok(())
 }
@@ -1194,6 +1268,7 @@ fn get_latest_bound_session_path(account_id: &str) -> Result<PathBuf, String> {
 struct AuthTokens {
     id_token: Option<String>,
     access_token: Option<String>,
+    refresh_token: Option<String>,
     account_id: Option<String>,
 }
 
@@ -1233,7 +1308,7 @@ fn build_http_client(
     if proxy_enabled.unwrap_or(false) {
         let proxy_value = proxy_url.unwrap_or_default();
         if proxy_value.trim().is_empty() {
-            return Err("代理已开启但代理地址为空".to_string());
+            return Err("\u{4ee3}\u{7406}\u{5df2}\u{5f00}\u{542f}\u{4f46}\u{4ee3}\u{7406}\u{5730}\u{5740}\u{4e3a}\u{7a7a}".to_string());
         }
         let proxy = Proxy::all(&proxy_value).map_err(|e| e.to_string())?;
         client_builder = client_builder.proxy(proxy);
@@ -1242,18 +1317,28 @@ fn build_http_client(
     client_builder.build().map_err(|e| e.to_string())
 }
 
+fn take_non_empty_token(value: Option<String>, missing_message: &str) -> Result<String, String> {
+    let value = value.unwrap_or_default();
+    if value.trim().is_empty() {
+        return Err(missing_message.to_string());
+    }
+    Ok(value)
+}
+
+fn is_current_chatgpt_account(chatgpt_account_id: &str) -> bool {
+    get_current_auth_account_id()
+        .map(|current_account_id| current_account_id == chatgpt_account_id)
+        .unwrap_or(false)
+}
+
 fn extract_auth_credentials(auth_json: &str) -> Result<(String, String), String> {
     let auth: AuthConfig = serde_json::from_str(auth_json).map_err(|e| e.to_string())?;
     let tokens = auth
         .tokens
         .ok_or_else(|| "Missing tokens in auth.json".to_string())?;
 
-    let access_token = tokens
-        .access_token
-        .ok_or_else(|| "Missing access token".to_string())?;
-    let chatgpt_account_id = tokens
-        .account_id
-        .ok_or_else(|| "Missing ChatGPT account ID".to_string())?;
+    let access_token = take_non_empty_token(tokens.access_token, "Missing access token")?;
+    let chatgpt_account_id = take_non_empty_token(tokens.account_id, "Missing ChatGPT account ID")?;
 
     Ok((access_token, chatgpt_account_id))
 }
@@ -1308,9 +1393,10 @@ fn get_current_auth_account_id() -> Result<String, String> {
     }
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let auth: AuthConfig = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-    auth.tokens
-        .and_then(|t| t.account_id)
-        .ok_or_else(|| "Missing account_id in auth.json".to_string())
+    let tokens = auth
+        .tokens
+        .ok_or_else(|| "Missing tokens in auth.json".to_string())?;
+    take_non_empty_token(tokens.account_id, "Missing account_id in auth.json")
 }
 
 #[tauri::command]
@@ -1911,7 +1997,7 @@ async fn get_codex_wham_usage(
     if account_id.is_empty() {
         return Ok(UsageResult {
             status: "missing_account_id".to_string(),
-            message: Some("缺少 ChatGPT account ID".to_string()),
+            message: Some("\u{7f3a}\u{5c11} ChatGPT account ID".to_string()),
             plan_type: None,
             usage: None,
         });
@@ -1924,74 +2010,71 @@ async fn get_codex_wham_usage(
         None => {
             return Ok(UsageResult {
                 status: "missing_token".to_string(),
-                message: Some("缺少 access token".to_string()),
+                message: Some("\u{7f3a}\u{5c11} access token".to_string()),
                 plan_type: None,
                 usage: None,
             })
         }
     };
-    let access_token = tokens.access_token;
-    let chatgpt_account_id = tokens.account_id;
 
-    if access_token.is_none() {
-        return Ok(UsageResult {
-            status: "missing_token".to_string(),
-            message: Some("缺少 access token".to_string()),
-            plan_type: None,
-            usage: None,
-        });
-    }
+    let access_token =
+        match take_non_empty_token(tokens.access_token, "\u{7f3a}\u{5c11} access token") {
+            Ok(value) => value,
+            Err(message) => {
+                return Ok(UsageResult {
+                    status: "missing_token".to_string(),
+                    message: Some(message),
+                    plan_type: None,
+                    usage: None,
+                })
+            }
+        };
+    let chatgpt_account_id =
+        match take_non_empty_token(tokens.account_id, "\u{7f3a}\u{5c11} ChatGPT account ID") {
+            Ok(value) => value,
+            Err(message) => {
+                return Ok(UsageResult {
+                    status: "missing_account_id".to_string(),
+                    message: Some(message),
+                    plan_type: None,
+                    usage: None,
+                })
+            }
+        };
+    let is_current_account = is_current_chatgpt_account(&chatgpt_account_id);
 
-    if chatgpt_account_id.is_none() {
-        return Ok(UsageResult {
-            status: "missing_account_id".to_string(),
-            message: Some("缺少 ChatGPT account ID".to_string()),
-            plan_type: None,
-            usage: None,
-        });
-    }
-
-    let mut client_builder = Client::builder();
-    if proxy_enabled.unwrap_or(false) {
-        let proxy_value = proxy_url.unwrap_or_default();
-        if proxy_value.trim().is_empty() {
+    let client = match build_http_client(proxy_enabled, proxy_url) {
+        Ok(client) => client,
+        Err(message) => {
             return Ok(UsageResult {
                 status: "error".to_string(),
-                message: Some("代理已开启但代理地址为空".to_string()),
+                message: Some(message),
                 plan_type: None,
                 usage: None,
-            });
+            })
         }
-        let proxy = Proxy::all(&proxy_value).map_err(|e| e.to_string())?;
-        client_builder = client_builder.proxy(proxy);
-    }
-
-    let client = client_builder.build().map_err(|e| e.to_string())?;
+    };
 
     let send_request = || {
         client
             .get("https://chatgpt.com/backend-api/wham/usage")
-            .header(
-                "Authorization",
-                format!("Bearer {}", access_token.as_deref().unwrap()),
-            )
+            .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/json")
-            .header("ChatGPT-Account-Id", chatgpt_account_id.as_deref().unwrap())
+            .header("ChatGPT-Account-Id", &chatgpt_account_id)
             .send()
     };
 
-    // 首次请求，失败后重试一次（处理网络波动等无状态码的异常）
     let response = match send_request().await {
         Ok(resp) => resp,
         Err(first_err) => {
-            log::warn!("wham/usage 首次请求失败，1秒后重试: {}", first_err);
+            log::warn!("wham/usage \u{9996}\u{6b21}\u{8bf7}\u{6c42}\u{5931}\u{8d25}\u{ff0c}1 \u{79d2}\u{540e}\u{91cd}\u{8bd5}: {}", first_err);
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             match send_request().await {
                 Ok(resp) => resp,
                 Err(retry_err) => {
                     return Ok(UsageResult {
                         status: "error".to_string(),
-                        message: Some(format!("请求失败（已重试）: {}", retry_err)),
+                        message: Some(format!("\u{8bf7}\u{6c42}\u{5931}\u{8d25}\u{ff08}\u{5df2}\u{91cd}\u{8bd5}\u{ff09}: {}", retry_err)),
                         plan_type: None,
                         usage: None,
                     })
@@ -2004,9 +2087,21 @@ async fn get_codex_wham_usage(
     let body = response.text().await.map_err(|e| e.to_string())?;
 
     if status == reqwest::StatusCode::UNAUTHORIZED {
+        let (status, message) = if is_current_account {
+            (
+                "expired".to_string(),
+                "\u{5f53}\u{524d}\u{8d26}\u{53f7}\u{767b}\u{5f55}\u{6001}\u{5df2}\u{5931}\u{6548}\u{ff0c}\u{8bf7}\u{91cd}\u{65b0}\u{767b}\u{5f55} Codex".to_string(),
+            )
+        } else {
+            (
+                "stale_token".to_string(),
+                "\u{8be5}\u{8d26}\u{53f7}\u{7f13}\u{5b58}\u{7684} access token \u{5df2}\u{5931}\u{6548}\u{ff0c}\u{8bf7}\u{5207}\u{6362}\u{5230}\u{8be5}\u{8d26}\u{53f7}\u{5e76}\u{91cd}\u{65b0}\u{5b8c}\u{6210}\u{4e00}\u{6b21} Codex \u{767b}\u{5f55}".to_string(),
+            )
+        };
+
         return Ok(UsageResult {
-            status: "expired".to_string(),
-            message: Some("Token 已过期或无效".to_string()),
+            status,
+            message: Some(message),
             plan_type: None,
             usage: None,
         });
@@ -2015,7 +2110,7 @@ async fn get_codex_wham_usage(
     if status == reqwest::StatusCode::FORBIDDEN {
         return Ok(UsageResult {
             status: "forbidden".to_string(),
-            message: Some("账号已被封禁或无权访问".to_string()),
+            message: Some("\u{8d26}\u{53f7}\u{5df2}\u{88ab}\u{5c01}\u{7981}\u{6216}\u{65e0}\u{6743}\u{8bbf}\u{95ee}".to_string()),
             plan_type: None,
             usage: None,
         });
@@ -2024,7 +2119,10 @@ async fn get_codex_wham_usage(
     if !status.is_success() {
         return Ok(UsageResult {
             status: "error".to_string(),
-            message: Some(format!("wham/usage 请求失败: {}", status)),
+            message: Some(format!(
+                "wham/usage \u{8bf7}\u{6c42}\u{5931}\u{8d25}: {}",
+                status
+            )),
             plan_type: None,
             usage: None,
         });
@@ -2410,13 +2508,19 @@ mod tests {
             account_info: TrayAccountInfo {
                 email: "test@example.com".to_string(),
                 plan_type: "team".to_string(),
+                account_id: None,
+                user_id: None,
+                account_user_id: None,
+                account_structure: None,
                 workspace_name: Some("团队空间".to_string()),
                 subscription_active_until: Some("2026-04-26T13:24:00Z".to_string()),
+                organizations: None,
             },
             usage_info: Some(TrayUsageSummary {
                 status: Some("ok".to_string()),
                 message: None,
                 plan_type: Some("team".to_string()),
+                context_window: None,
                 five_hour_limit: Some(TrayLimitSummary {
                     percent_left: 46.0,
                     reset_time: "0".to_string(),
@@ -2427,6 +2531,7 @@ mod tests {
                 }),
                 code_review_limit: None,
                 last_updated: Some("0".to_string()),
+                source_file: None,
             }),
             is_active: true,
             created_at: "0".to_string(),
@@ -2513,13 +2618,19 @@ mod tests {
             account_info: TrayAccountInfo {
                 email: "free@example.com".to_string(),
                 plan_type: "free".to_string(),
+                account_id: None,
+                user_id: None,
+                account_user_id: None,
+                account_structure: None,
                 workspace_name: None,
                 subscription_active_until: None,
+                organizations: None,
             },
             usage_info: Some(TrayUsageSummary {
                 status: Some("ok".to_string()),
                 message: None,
                 plan_type: Some("free".to_string()),
+                context_window: None,
                 five_hour_limit: None,
                 weekly_limit: Some(TrayLimitSummary {
                     percent_left: 100.0,
@@ -2530,6 +2641,7 @@ mod tests {
                     reset_time: "10:10".to_string(),
                 }),
                 last_updated: Some("0".to_string()),
+                source_file: None,
             }),
             is_active: false,
             created_at: "0".to_string(),

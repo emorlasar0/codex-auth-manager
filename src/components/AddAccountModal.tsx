@@ -49,8 +49,19 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
 
     try {
       const parsed = JSON.parse(authJson);
-      if (!parsed.tokens || !parsed.tokens.id_token) {
-        throw new Error('无效的auth.json格式：缺少tokens字段');
+      const hasValidTokens =
+        parsed.tokens &&
+        typeof parsed.tokens.id_token === 'string' &&
+        parsed.tokens.id_token.trim() &&
+        typeof parsed.tokens.access_token === 'string' &&
+        parsed.tokens.access_token.trim() &&
+        typeof parsed.tokens.refresh_token === 'string' &&
+        parsed.tokens.refresh_token.trim() &&
+        typeof parsed.tokens.account_id === 'string' &&
+        parsed.tokens.account_id.trim();
+
+      if (!hasValidTokens) {
+        throw new Error('\u65e0\u6548\u7684 auth.json \u683c\u5f0f\uff1a\u7f3a\u5c11\u5b8c\u6574\u7684 tokens \u5b57\u6bb5');
       }
 
       await onAdd(authJson, alias || undefined);

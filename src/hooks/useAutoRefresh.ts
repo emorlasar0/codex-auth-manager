@@ -17,7 +17,16 @@ interface RustUsageData {
 }
 
 interface RustUsageResult {
-  status: 'ok' | 'missing_account_id' | 'missing_token' | 'no_codex_access' | 'no_usage' | 'expired' | 'forbidden' | 'error';
+  status:
+    | 'ok'
+    | 'missing_account_id'
+    | 'missing_token'
+    | 'no_codex_access'
+    | 'no_usage'
+    | 'expired'
+    | 'stale_token'
+    | 'forbidden'
+    | 'error';
   message?: string;
   plan_type?: string;
   usage?: RustUsageData;
@@ -104,6 +113,7 @@ export function useAutoRefresh() {
     | 'missing-token'
     | 'no-codex-access'
     | 'expired'
+    | 'stale-token'
     | 'forbidden'
     | 'error'
     | 'skipped';
@@ -143,6 +153,7 @@ export function useAutoRefresh() {
         missing_token: 'missing-token',
         no_codex_access: 'no-codex-access',
         expired: 'expired',
+        stale_token: 'stale-token',
         forbidden: 'forbidden',
         error: 'error',
       };
@@ -233,6 +244,10 @@ export function useAutoRefresh() {
       return;
     }
 
+    if (isRefreshing) {
+      return;
+    }
+
     if (autoRefreshAccountIdRef.current === activeAccountId) {
       return;
     }
@@ -241,12 +256,14 @@ export function useAutoRefresh() {
     if (!activeAccount) return;
 
     const runAutoRefresh = async () => {
-      autoRefreshAccountIdRef.current = activeAccountId;
-      await refreshSingleAccount(activeAccountId);
+      const result = await refreshSingleAccount(activeAccountId);
+      if (result.status !== 'skipped') {
+        autoRefreshAccountIdRef.current = activeAccountId;
+      }
     };
 
     void runAutoRefresh();
-  }, [accounts, activeAccountId, refreshSingleAccount]);
+  }, [accounts, activeAccountId, isRefreshing, refreshSingleAccount]);
 
   // 定期检测外部登录/登出操作并同步前端状态
   useEffect(() => {

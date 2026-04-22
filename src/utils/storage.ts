@@ -226,8 +226,19 @@ function parseAccountsBackup(data: string): AccountsBackupFile {
   }
 
   parsed.accounts.forEach((account, index) => {
-    if (!account?.authConfig?.tokens?.id_token) {
-      throw new Error(`备份文件中的第 ${index + 1} 个账号缺少有效凭证`);
+    const tokens = account?.authConfig?.tokens;
+    const hasValidTokens =
+      typeof tokens?.id_token === 'string' &&
+      tokens.id_token.trim() &&
+      typeof tokens.access_token === 'string' &&
+      tokens.access_token.trim() &&
+      typeof tokens.refresh_token === 'string' &&
+      tokens.refresh_token.trim() &&
+      typeof tokens.account_id === 'string' &&
+      tokens.account_id.trim();
+
+    if (!hasValidTokens) {
+      throw new Error(`备份文件中的第 ${index + 1} 个账号缺少完整凭证`);
     }
   });
 
@@ -280,6 +291,39 @@ async function fetchWorkspaceMetadata(
     console.log(`Failed to fetch workspace metadata for account ${accountId}:`, error);
     return null;
   }
+}
+
+function getActiveAccountId(accounts: StoredAccount[]): string | null {
+  return accounts.find((account) => account.isActive)?.id ?? null;
+}
+
+async function saveStoreWithActiveAccount(accountId: string | null): Promise<AccountsStore> {
+  const latestStore = await loadAccountsStore();
+  let changed = false;
+
+  const accounts = latestStore.accounts.map((account) => {
+    const shouldBeActive = accountId ? account.id === accountId : false;
+    if (account.isActive === shouldBeActive) {
+      return account;
+    }
+
+    changed = true;
+    return {
+      ...account,
+      isActive: shouldBeActive,
+    };
+  });
+
+  if (!changed) {
+    return latestStore;
+  }
+
+  const nextStore: AccountsStore = {
+    ...latestStore,
+    accounts,
+  };
+  await saveAccountsStore(nextStore);
+  return nextStore;
 }
 
 /**
@@ -402,21 +446,47 @@ export async function addAccount(
     const existingAccount = store.accounts[existingIndex];
     await saveAccountAuth(existingAccount.id, authConfig);
     const workspaceMetadata = await fetchWorkspaceMetadata(existingAccount.id, store.config);
-    const enrichedAccountInfo = mergeWorkspaceMetadata(accountInfo, workspaceMetadata);
+    const latestStore = await loadAccountsStore();
+    const latestIndex = latestStore.accounts.findIndex((account) => account.id === existingAccount.id);
 
-    // 更新现有账号
-    store.accounts[existingIndex] = {
+    if (latestIndex >= 0) {
+      const latestAccount = latestStore.accounts[latestIndex];
+      const nextAccount: StoredAccount = {
+        ...latestAccount,
+        accountInfo: mergeWorkspaceMetadata(
+          {
+            ...latestAccount.accountInfo,
+            ...accountInfo,
+          },
+          workspaceMetadata
+        ),
+        alias: alias || latestAccount.alias,
+        updatedAt: now,
+      };
+      latestStore.accounts[latestIndex] = nextAccount;
+      await saveAccountsStore(latestStore);
+      return nextAccount;
+    }
+
+    const restoredAccount: StoredAccount = {
       ...existingAccount,
-      accountInfo: enrichedAccountInfo,
-      alias: alias || store.accounts[existingIndex].alias,
+      accountInfo: mergeWorkspaceMetadata(
+        {
+          ...existingAccount.accountInfo,
+          ...accountInfo,
+        },
+        workspaceMetadata
+      ),
+      alias: alias || existingAccount.alias,
       updatedAt: now,
     };
-    await saveAccountsStore(store);
-    return store.accounts[existingIndex];
+    latestStore.accounts.push(restoredAccount);
+    await saveAccountsStore(latestStore);
+    return restoredAccount;
   }
   
-  // 创建新账号
-  // 同邮箱不同工作空间时自动添加计划类型后缀以区分
+  // ?????
+  // ???????????????????????
   let autoAlias = alias || accountInfo.email.split('@')[0];
   if (!alias) {
     const newEmail = normalizeEmail(accountInfo.email);
@@ -433,25 +503,58 @@ export async function addAccount(
     id: generateId(),
     alias: autoAlias,
     accountInfo,
-    isActive: store.accounts.length === 0, // 第一个账号默认激活
+    isActive: store.accounts.length === 0, // ?????????
     createdAt: now,
     updatedAt: now,
   };
   
   await saveAccountAuth(newAccount.id, authConfig);
   const workspaceMetadata = await fetchWorkspaceMetadata(newAccount.id, store.config);
-  newAccount.accountInfo = mergeWorkspaceMetadata(newAccount.accountInfo, workspaceMetadata);
-  store.accounts.push(newAccount);
-  await saveAccountsStore(store);
+  const latestStore = await loadAccountsStore();
+  const latestMatch = findBestMatch(latestStore.accounts, newIdentity);
+
+  if (latestMatch.rank >= 2 && latestMatch.index >= 0) {
+    const latestAccount = latestStore.accounts[latestMatch.index];
+    await saveAccountAuth(latestAccount.id, authConfig);
+    if (latestAccount.id !== newAccount.id) {
+      await deleteAccountAuth(newAccount.id).catch((error) => {
+        console.log(`Failed to delete temporary auth for account ${newAccount.id}:`, error);
+      });
+    }
+
+    const nextAccount: StoredAccount = {
+      ...latestAccount,
+      accountInfo: mergeWorkspaceMetadata(
+        {
+          ...latestAccount.accountInfo,
+          ...accountInfo,
+        },
+        workspaceMetadata
+      ),
+      alias: alias || latestAccount.alias,
+      updatedAt: now,
+    };
+    latestStore.accounts[latestMatch.index] = nextAccount;
+    await saveAccountsStore(latestStore);
+    return nextAccount;
+  }
+
+  const finalAccount: StoredAccount = {
+    ...newAccount,
+    accountInfo: mergeWorkspaceMetadata(newAccount.accountInfo, workspaceMetadata),
+    isActive: latestStore.accounts.length === 0,
+  };
+  latestStore.accounts.push(finalAccount);
+  await saveAccountsStore(latestStore);
   
-  return newAccount;
+  return finalAccount;
 }
 
 export async function refreshAccountsWorkspaceMetadata(config: AppConfig): Promise<StoredAccount[]> {
   const store = await loadAccountsStore();
-  let changed = false;
+  const accountInfoUpdates = new Map<string, AccountInfo>();
 
-  const updatedAccounts = await Promise.all(
+  await Promise.all(
     store.accounts.map(async (account) => {
       let baseAccountInfo = account.accountInfo;
       try {
@@ -470,24 +573,45 @@ export async function refreshAccountsWorkspaceMetadata(config: AppConfig): Promi
       const metadata = await fetchWorkspaceMetadata(account.id, config);
       const accountInfo = mergeWorkspaceMetadata(baseAccountInfo, metadata);
 
-      if (JSON.stringify(accountInfo) === JSON.stringify(account.accountInfo)) {
-        return account;
+      if (JSON.stringify(accountInfo) !== JSON.stringify(account.accountInfo)) {
+        accountInfoUpdates.set(account.id, accountInfo);
       }
-
-      changed = true;
-      return {
-        ...account,
-        accountInfo,
-      };
     })
   );
 
-  if (changed) {
-    store.accounts = updatedAccounts;
-    await saveAccountsStore(store);
+  if (accountInfoUpdates.size === 0) {
+    return store.accounts;
   }
 
-  return changed ? updatedAccounts : store.accounts;
+  const latestStore = await loadAccountsStore();
+  let changed = false;
+  const updatedAccounts = latestStore.accounts.map((account) => {
+    const nextAccountInfo = accountInfoUpdates.get(account.id);
+    if (!nextAccountInfo) {
+      return account;
+    }
+
+    if (JSON.stringify(nextAccountInfo) === JSON.stringify(account.accountInfo)) {
+      return account;
+    }
+
+    changed = true;
+    return {
+      ...account,
+      accountInfo: nextAccountInfo,
+    };
+  });
+
+  if (!changed) {
+    return latestStore.accounts;
+  }
+
+  const nextStore: AccountsStore = {
+    ...latestStore,
+    accounts: updatedAccounts,
+  };
+  await saveAccountsStore(nextStore);
+  return nextStore.accounts;
 }
 
 /**
@@ -495,7 +619,20 @@ export async function refreshAccountsWorkspaceMetadata(config: AppConfig): Promi
  */
 export async function removeAccount(accountId: string): Promise<void> {
   const store = await loadAccountsStore();
+  const removedAccount = store.accounts.find((acc) => acc.id === accountId);
   store.accounts = store.accounts.filter((acc) => acc.id !== accountId);
+
+  if (
+    removedAccount?.isActive &&
+    store.accounts.length > 0 &&
+    !store.accounts.some((account) => account.isActive)
+  ) {
+    store.accounts[0] = {
+      ...store.accounts[0],
+      isActive: true,
+    };
+  }
+
   await saveAccountsStore(store);
   await deleteAccountAuth(accountId);
 }
@@ -521,13 +658,7 @@ export async function updateAccountUsage(
  * 设置活动账号
  */
 export async function setActiveAccount(accountId: string): Promise<void> {
-  const store = await loadAccountsStore();
-  
-  store.accounts.forEach((acc) => {
-    acc.isActive = acc.id === accountId;
-  });
-  
-  await saveAccountsStore(store);
+  await saveStoreWithActiveAccount(accountId);
 }
 
 /**
@@ -542,21 +673,23 @@ export async function getActiveAccount(): Promise<StoredAccount | null> {
  * 切换到指定账号（写入.codex/auth.json）
  */
 export async function switchToAccount(accountId: string): Promise<void> {
+  await syncCurrentAccount();
+
   const store = await loadAccountsStore();
   const account = store.accounts.find((acc) => acc.id === accountId);
-  
+
   if (!account) {
     throw new Error('Account not found');
   }
-  
+
   const authConfig = await loadAccountAuth(accountId);
 
-  // 调用Tauri后端写入auth.json
+  // ???Tauri??????auth.json
   await invoke('write_codex_auth', {
     authConfig: JSON.stringify(authConfig),
   });
-  
-  // 更新活动状态
+
+  // ??????????
   await setActiveAccount(accountId);
 }
 
@@ -613,26 +746,15 @@ export async function syncCurrentAccount(): Promise<string | null> {
   } catch (error) {
     console.log('Failed to read current auth:', error);
   }
+
   const store = await loadAccountsStore();
   let matchedId: string | null = null;
-  let needsSave = false;
-  
-  // 如果 auth.json 不存在或无法获取账号ID，清除所有账号的激活状态
+
   if (!currentIdentity || isEmptyIdentity(currentIdentity)) {
-    store.accounts.forEach((acc) => {
-      if (acc.isActive) {
-        acc.isActive = false;
-        needsSave = true;
-      }
-    });
-    
-    if (needsSave) {
-      await saveAccountsStore(store);
-    }
-    
+    await saveStoreWithActiveAccount(null);
     return null;
   }
-  
+
   let bestRank = 0;
   let bestIndexes: number[] = [];
 
@@ -650,17 +772,7 @@ export async function syncCurrentAccount(): Promise<string | null> {
   });
 
   if (bestRank === 0 || bestIndexes.length === 0) {
-    store.accounts.forEach((acc) => {
-      if (acc.isActive) {
-        acc.isActive = false;
-        needsSave = true;
-      }
-    });
-
-    if (needsSave) {
-      await saveAccountsStore(store);
-    }
-
+    await saveStoreWithActiveAccount(null);
     return null;
   }
 
@@ -676,20 +788,12 @@ export async function syncCurrentAccount(): Promise<string | null> {
     }, bestIndexes[0]);
   }
 
-  store.accounts.forEach((acc, index) => {
-    const shouldBeActive = index === targetIndex;
-    if (acc.isActive !== shouldBeActive) {
-      acc.isActive = shouldBeActive;
-      needsSave = true;
-    }
-    if (shouldBeActive) {
-      matchedId = acc.id;
-    }
-  });
-  
-  if (needsSave) {
-    await saveAccountsStore(store);
-  }
+  matchedId = store.accounts[targetIndex]?.id ?? null;
+
+  const persistedStore = await saveStoreWithActiveAccount(matchedId);
+  matchedId = matchedId && persistedStore.accounts.some((account) => account.id === matchedId)
+    ? matchedId
+    : getActiveAccountId(persistedStore.accounts);
 
   if (matchedId && currentAuthConfig) {
     let shouldPersistCurrentAuth = false;
@@ -706,6 +810,6 @@ export async function syncCurrentAccount(): Promise<string | null> {
       await saveAccountAuth(matchedId, currentAuthConfig);
     }
   }
-  
+
   return matchedId;
 }

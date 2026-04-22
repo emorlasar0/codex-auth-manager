@@ -10,9 +10,11 @@ interface HeaderProps {
   onExportBackup: () => void;
   onRefreshAll: () => void | Promise<void>;
   onSyncCodexProxyEnv: () => void | Promise<void>;
+  onToggleAutoRestartCodex: () => void | Promise<void>;
   onOpenSettings: () => void;
   onToggleProxy: () => void;
   isProxyEnabled: boolean;
+  isAutoRestartCodexOnSwitch: boolean;
   isRefreshing: boolean;
   isRefreshingAll: boolean;
   isSyncingCodexProxyEnv: boolean;
@@ -30,9 +32,11 @@ export const Header: React.FC<HeaderProps> = ({
   onExportBackup,
   onRefreshAll,
   onSyncCodexProxyEnv,
+  onToggleAutoRestartCodex,
   onOpenSettings,
   onToggleProxy,
   isProxyEnabled,
+  isAutoRestartCodexOnSwitch,
   isRefreshing,
   isRefreshingAll,
   isSyncingCodexProxyEnv,
@@ -111,23 +115,24 @@ export const Header: React.FC<HeaderProps> = ({
                 type="button"
                 onClick={() => setIsToolsMenuOpen((open) => !open)}
                 disabled={isLoading || isSyncingCodexProxyEnv}
-                className="h-10 w-10 rounded-full border border-[var(--dash-border)] text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 bg-white/70 transition-colors flex items-center justify-center disabled:opacity-50"
-                title={'\u5de5\u5177'}
+                aria-expanded={isToolsMenuOpen}
+                className="h-10 px-4 rounded-full border border-[var(--dash-border)] text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 bg-white/70 transition-colors flex items-center gap-2 disabled:opacity-50"
+                title="小工具"
               >
+                <span className="text-sm">小工具</span>
                 <svg
-                  className={`w-4 h-4 ${isSyncingCodexProxyEnv ? 'animate-spin' : ''}`}
+                  className={`w-4 h-4 transition-transform ${isToolsMenuOpen ? 'rotate-180' : ''}`}
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317a1.724 1.724 0 013.35 0 1.724 1.724 0 002.573 1.066 1.724 1.724 0 012.898 1.675 1.724 1.724 0 001.066 2.573 1.724 1.724 0 010 3.35 1.724 1.724 0 00-1.066 2.573 1.724 1.724 0 01-2.898 1.675 1.724 1.724 0 00-2.573 1.066 1.724 1.724 0 01-3.35 0 1.724 1.724 0 00-2.573-1.066 1.724 1.724 0 01-2.898-1.675 1.724 1.724 0 00-1.066-2.573 1.724 1.724 0 010-3.35 1.724 1.724 0 001.066-2.573 1.724 1.724 0 012.898-1.675 1.724 1.724 0 002.573-1.066z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
 
               {isToolsMenuOpen && (
                 <div className="absolute right-0 top-full pt-2 z-20">
-                  <div className="w-56 rounded-2xl border border-[var(--dash-border)] bg-white/95 backdrop-blur shadow-[0_20px_50px_rgba(15,23,42,0.16)] p-1.5">
+                  <div className="w-80 rounded-2xl border border-[var(--dash-border)] bg-white/95 backdrop-blur shadow-[0_20px_50px_rgba(15,23,42,0.16)] p-3">
                     <button
                       type="button"
                       onClick={() => {
@@ -140,8 +145,37 @@ export const Header: React.FC<HeaderProps> = ({
                       <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h10" />
                       </svg>
-                      <span>{isSyncingCodexProxyEnv ? '\u6b63\u5728\u540c\u6b65\u4ee3\u7406...' : '\u540c\u6b65\u4ee3\u7406\u5230 Codex'}</span>
+                      <span>{isSyncingCodexProxyEnv ? '正在同步代理...' : '同步代理到 Codex'}</span>
                     </button>
+
+                    <div className="my-3 h-px bg-[var(--dash-border)]" />
+
+                    <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-3">
+                      <div className="min-w-0">
+                        <p className="text-sm text-[var(--dash-text-primary)]">切换账号后自动重启 Codex</p>
+                        <p className="text-xs text-[var(--dash-text-muted)] mt-1 leading-5">
+                          首次切换前会提示；执行切换时会显示进度弹窗
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void onToggleAutoRestartCodex();
+                        }}
+                        disabled={isLoading}
+                        className={`relative h-8 w-14 rounded-full transition-colors ${
+                          isAutoRestartCodexOnSwitch ? 'bg-blue-500' : 'bg-slate-200'
+                        } disabled:opacity-50`}
+                        aria-pressed={isAutoRestartCodexOnSwitch}
+                        title={isAutoRestartCodexOnSwitch ? '已启用自动重启' : '已关闭自动重启'}
+                      >
+                        <span
+                          className={`absolute top-1 left-1 h-6 w-6 bg-white rounded-full shadow transition-transform ${
+                            isAutoRestartCodexOnSwitch ? 'translate-x-6' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

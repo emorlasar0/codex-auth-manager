@@ -834,6 +834,76 @@ function Resolve-ExecutablePath([string]$commandLine) {{
     return $null
 }}
 
+function Resolve-PackageFullNameFromPath([string]$path) {{
+    if (-not $path) {{
+        return $null
+    }}
+
+    if ($path -match 'WindowsApps\\([^\\]+)\\app\\Codex\.exe$') {{
+        return $Matches[1]
+    }}
+
+    return $null
+}}
+
+function Resolve-CodexDesktopLaunchTarget([string]$executablePath, [string]$commandLine) {{
+    $candidatePaths = @()
+    if ($executablePath) {{
+        $candidatePaths += $executablePath
+    }}
+
+    $resolvedFromCommand = Resolve-ExecutablePath $commandLine
+    if ($resolvedFromCommand) {{
+        $candidatePaths += $resolvedFromCommand
+    }}
+
+    foreach ($candidatePath in $candidatePaths) {{
+        $packageFullName = Resolve-PackageFullNameFromPath $candidatePath
+        if (-not $packageFullName) {{
+            continue
+        }}
+
+        $package = Get-AppxPackage | Where-Object {{ $_.PackageFullName -eq $packageFullName }} | Select-Object -First 1
+        if (-not $package) {{
+            $package = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Sort-Object Version -Descending | Select-Object -First 1
+        }}
+        if (-not $package) {{
+            continue
+        }}
+
+        try {{
+            $manifest = Get-AppxPackageManifest -Package $package.PackageFullName
+            $application = $manifest.Package.Applications.Application |
+                Where-Object {{ $_.Executable -eq 'app/Codex.exe' }} |
+                Select-Object -First 1
+
+            if (-not $application) {{
+                $application = $manifest.Package.Applications.Application | Select-Object -First 1
+            }}
+
+            if ($application -and $application.Id) {{
+                return [pscustomobject]@{{
+                    mode = 'appx'
+                    value = 'shell:AppsFolder\{0}!{1}' -f $package.PackageFamilyName, $application.Id
+                }}
+            }}
+        }} catch {{
+            continue
+        }}
+    }}
+
+    foreach ($candidatePath in $candidatePaths) {{
+        if ($candidatePath) {{
+            return [pscustomobject]@{{
+                mode = 'path'
+                value = $candidatePath
+            }}
+        }}
+    }}
+
+    return $null
+}}
+
 $desktopProcesses = @(
     Get-CimInstance Win32_Process | Where-Object {{
         $_.CommandLine -and (
@@ -851,12 +921,9 @@ if (-not $desktopMain) {{
     $desktopMain = $desktopProcesses | Select-Object -First 1
 }}
 
-$appExecutablePath = $null
+$desktopLaunchTarget = $null
 if ($desktopMain) {{
-    $appExecutablePath = $desktopMain.ExecutablePath
-    if (-not $appExecutablePath) {{
-        $appExecutablePath = Resolve-ExecutablePath $desktopMain.CommandLine
-    }}
+    $desktopLaunchTarget = Resolve-CodexDesktopLaunchTarget $desktopMain.ExecutablePath $desktopMain.CommandLine
 }}
 
 foreach ($process in $desktopProcesses) {{
@@ -864,9 +931,13 @@ foreach ($process in $desktopProcesses) {{
 }}
 
 $appRestarted = $false
-if ($desktopProcesses.Count -gt 0 -and $appExecutablePath) {{
+if ($desktopProcesses.Count -gt 0 -and $desktopLaunchTarget) {{
     Start-Sleep -Milliseconds 700
-    Start-Process -FilePath $appExecutablePath | Out-Null
+    if ($desktopLaunchTarget.mode -eq 'appx') {{
+        Start-Process -FilePath 'explorer.exe' -ArgumentList $desktopLaunchTarget.value | Out-Null
+    }} else {{
+        Start-Process -FilePath $desktopLaunchTarget.value | Out-Null
+    }}
     $appRestarted = $true
 }}
 

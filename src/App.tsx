@@ -135,9 +135,11 @@ function App() {
   const [switchRestartConfirm, setSwitchRestartConfirm] = useState<{
     isOpen: boolean;
     account: StoredAccount | null;
+    mode: 'confirm' | 'progress';
   }>({
     isOpen: false,
     account: null,
+    mode: 'confirm',
   });
   const [isRestartingCodex, setIsRestartingCodex] = useState(false);
 
@@ -676,15 +678,22 @@ function App() {
     }
   };
 
+  const closeSwitchRestartDialog = () => {
+    setSwitchRestartConfirm({
+      isOpen: false,
+      account: null,
+      mode: 'confirm',
+    });
+  };
+
   const completeAccountSwitch = async (account: StoredAccount, restartCodex: boolean) => {
     await switchToAccount(account.id);
 
     if (!restartCodex) {
-      showToast('账号已切换，请重启 Codex 应用以使新账号生效', 'success');
+      showToast('\u8d26\u53f7\u5df2\u5207\u6362\uff0c\u8bf7\u91cd\u542f Codex \u5e94\u7528\u4ee5\u4f7f\u65b0\u8d26\u53f7\u751f\u6548', 'success');
       return;
     }
 
-    setIsRestartingCodex(true);
     try {
       const result = await invoke<RestartCodexProcessesResult>('restart_codex_processes', {
         codexPath: config.codexPath,
@@ -695,24 +704,44 @@ function App() {
         restartedTargets.push('Codex App');
       }
       if (result.cliRestarted) {
-        restartedTargets.push('PowerShell 版 Codex');
+        restartedTargets.push('PowerShell \u7248 Codex');
       }
 
       if (restartedTargets.length > 0) {
-        showToast(`账号已切换，已重启 ${restartedTargets.join('、')}`, 'success');
+        showToast(`\u8d26\u53f7\u5df2\u5207\u6362\uff0c\u5df2\u91cd\u542f ${restartedTargets.join('\u3001')}`, 'success');
       } else {
-        showToast('账号已切换，未检测到正在运行的 Codex 进程', 'warning');
+        showToast('\u8d26\u53f7\u5df2\u5207\u6362\uff0c\u672a\u68c0\u6d4b\u5230\u6b63\u5728\u8fd0\u884c\u7684 Codex \u8fdb\u7a0b', 'warning');
       }
     } catch (currentError) {
-      setError(currentError instanceof Error ? currentError.message : '重启 Codex 进程失败');
-      showToast('账号已切换，但自动重启 Codex 失败', 'warning');
-    } finally {
-      setIsRestartingCodex(false);
+      setError(currentError instanceof Error ? currentError.message : '\u91cd\u542f Codex \u8fdb\u7a0b\u5931\u8d25');
+      showToast('\u8d26\u53f7\u5df2\u5207\u6362\uff0c\u4f46\u81ea\u52a8\u91cd\u542f Codex \u5931\u8d25', 'warning');
     }
   };
 
   const handleToggleProxy = async () => {
     await updateConfig({ proxyEnabled: !config.proxyEnabled });
+  };
+
+  const handleToggleAutoRestartCodex = async () => {
+    await updateConfig({
+      autoRestartCodexOnSwitch: !config.autoRestartCodexOnSwitch,
+    });
+  };
+
+  const runAccountSwitchWithRestart = async (account: StoredAccount) => {
+    setSwitchRestartConfirm({
+      isOpen: true,
+      account,
+      mode: 'progress',
+    });
+    setIsRestartingCodex(true);
+
+    try {
+      await completeAccountSwitch(account, true);
+    } finally {
+      setIsRestartingCodex(false);
+      closeSwitchRestartDialog();
+    }
   };
 
   const handleApplyCloseBehavior = async (
@@ -751,29 +780,41 @@ function App() {
     if (isSubscriptionExpired) {
       const synced = await syncCurrentCodexAccount();
       if (synced) {
-        showToast('目标账号已过期，已同步当前 Codex 登录账号', 'warning');
+        showToast('\u76ee\u6807\u8d26\u53f7\u5df2\u8fc7\u671f\uff0c\u5df2\u540c\u6b65\u5f53\u524d Codex \u767b\u5f55\u8d26\u53f7', 'warning');
       }
       return;
     }
 
     if (config.autoRestartCodexOnSwitch && !config.skipSwitchRestartConfirm) {
-      setSwitchRestartConfirm({ isOpen: true, account });
+      setSwitchRestartConfirm({
+        isOpen: true,
+        account,
+        mode: 'confirm',
+      });
       return;
     }
 
-    await completeAccountSwitch(account, config.autoRestartCodexOnSwitch);
+    if (config.autoRestartCodexOnSwitch) {
+      await runAccountSwitchWithRestart(account);
+      return;
+    }
+
+    await completeAccountSwitch(account, false);
   };
 
   const handleConfirmSwitchRestart = async (rememberChoice: boolean) => {
     const pendingAccount = switchRestartConfirm.account;
     if (!pendingAccount) {
-      setSwitchRestartConfirm({ isOpen: false, account: null });
+      closeSwitchRestartDialog();
       return;
     }
 
-    setSwitchRestartConfirm({ isOpen: false, account: null });
-
     if (rememberChoice) {
+      setSwitchRestartConfirm({
+        isOpen: true,
+        account: pendingAccount,
+        mode: 'progress',
+      });
       try {
         await updateConfig({ skipSwitchRestartConfirm: true });
       } catch (currentError) {
@@ -781,7 +822,7 @@ function App() {
       }
     }
 
-    await completeAccountSwitch(pendingAccount, true);
+    await runAccountSwitchWithRestart(pendingAccount);
   };
 
   const availablePlanTypes: Array<Exclude<PlanFilterValue, 'all'>> = (
@@ -826,9 +867,11 @@ function App() {
           onExportBackup={handleExportBackup}
           onRefreshAll={handleRefreshAll}
           onSyncCodexProxyEnv={handleSyncCodexProxyEnv}
+          onToggleAutoRestartCodex={handleToggleAutoRestartCodex}
           onOpenSettings={() => setShowSettings(true)}
           onToggleProxy={handleToggleProxy}
           isProxyEnabled={config.proxyEnabled}
+          isAutoRestartCodexOnSwitch={config.autoRestartCodexOnSwitch}
           isRefreshing={isRefreshing}
           isRefreshingAll={isRefreshing && refreshingAccountId === 'all'}
           isSyncingCodexProxyEnv={isSyncingCodexProxyEnv}
@@ -984,8 +1027,10 @@ function App() {
 
       <SwitchRestartDialog
         isOpen={switchRestartConfirm.isOpen}
+        mode={switchRestartConfirm.mode}
         isSubmitting={isRestartingCodex}
-        onClose={() => setSwitchRestartConfirm({ isOpen: false, account: null })}
+        accountName={switchRestartConfirm.account?.alias || switchRestartConfirm.account?.accountInfo.email || null}
+        onClose={closeSwitchRestartDialog}
         onConfirm={(rememberChoice) => {
           void handleConfirmSwitchRestart(rememberChoice);
         }}

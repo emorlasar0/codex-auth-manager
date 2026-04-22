@@ -92,3 +92,51 @@
 ### 6. 补充说明
 - 由于无法可靠判断“会话进行中”，当前实现遵循需求：仅在用户开启自动重启功能后，于首次切换时弹出确认框，由用户自行决定是否继续
 - Windows 安装包 workflow 已新增，推送后可通过 GitHub Actions 构建并下载 artifact 到本地验证
+## 编码前检查 - 重构小工具与 Codex App 唤醒
+时间：2026-04-22 14:25:00
+
+□ 已查阅上下文摘要文件：.Codex/context-summary-restart-progress.md
+□ 将使用以下可复用组件：
+  - Header：C:\Users\JCS\Desktop\codex-auth-manager\src\components\Header.tsx - 复用悬浮菜单布局并改成“小工具”文字入口
+  - SwitchRestartDialog：C:\Users\JCS\Desktop\codex-auth-manager\src\components\SwitchRestartDialog.tsx - 扩展为“确认 + 进度”双态弹窗
+  - QuickLoginModal：C:\Users\JCS\Desktop\codex-auth-manager\src\components\QuickLoginModal.tsx - 参考进度反馈表现
+  - useAccountStore.updateConfig：C:\Users\JCS\Desktop\codex-auth-manager\src\stores\useAccountStore.ts - 即时持久化自动重启开关
+  - restart_codex_processes_windows：C:\Users\JCS\Desktop\codex-auth-manager\src-tauri\src\lib.rs - 修正 Codex App 唤醒方式
+□ 将遵循命名约定：前端 camelCase / React onXxx；Rust snake_case + serde camelCase
+□ 将遵循代码风格：顶部交互放 Header，流程编排放 App，系统命令留在 Tauri Rust 层
+□ 确认不重复造轮子，证明：已检查 Header、QuickLoginModal、SwitchRestartDialog、SettingsModal、lib.rs 中现有重启与浮层实现，无现成“工具浮层内即时开关 + 系统方式唤醒 Codex App”的完整实现
+## 编码后声明 - 重构小工具与 Codex App 唤醒
+时间：2026-04-22 14:46:00
+
+### 1. 复用了以下既有组件
+- Header：沿用顶部悬浮菜单模式，将入口改为“小工具”文字按钮，并把自动重启开关迁入浮层。
+- SwitchRestartDialog：扩展为“确认态 + 进度态”双模式，不额外新增一套重复弹窗。
+- SettingsModal 中的滑块样式：复用自动代理开关的滑块视觉，放到小工具浮层中即时生效。
+- Rust `restart_codex_processes_windows`：保留现有进程枚举与 JSON 回传结构，仅修正桌面版 Codex App 的唤醒方式。
+
+### 2. 遵循了以下项目约定
+- 命名约定：前端仍使用 `handleToggleAutoRestartCodex`、`runAccountSwitchWithRestart` 等 camelCase；Rust 继续使用 snake_case + serde camelCase。
+- 代码风格：Header 负责入口展示，App 负责流程编排，Tauri Rust 负责系统级进程控制，未新增跨层耦合。
+- 文件组织：未新增无必要模块；在原有 `Header`、`SwitchRestartDialog`、`SettingsModal`、`lib.rs` 上增量修改。
+
+### 3. 对比了以下相似实现
+- Header 菜单：保留原有 hover/click 浮层机制，但入口从图标按钮改为文字“小工具”，更符合用户当前交互预期。
+- QuickLoginModal：借鉴其阻塞式进度反馈思路，但未硬复用组件，避免快速登录语义污染账号切换重启流程。
+- SettingsModal 代理开关：复用同款滑块 UI 到小工具浮层，而不是继续在设置弹窗中维护独立开关。
+- 原桌面版重启逻辑：原先直接 `Start-Process Codex.exe`，现改为优先解析 `shell:AppsFolder\<PackageFamily>!<AppId>`，回退时才使用直接路径。
+
+### 4. 未重复造轮子的证明
+- 已检查 `Header`、`SwitchRestartDialog`、`QuickLoginModal`、`SettingsModal`、`src-tauri/src/lib.rs`，确认不存在现成的“文字式小工具入口 + 进度态重启弹窗 + AppX 唤醒”组合实现。
+- 本次没有新增独立设置页或第二套进度组件，而是在现有组件上扩展，避免重复维护。
+
+### 5. 本地验证结果
+- `npm run lint`：通过
+- `npm run build`：通过
+- `cargo fmt --all`：通过
+- `cargo check --lib`：失败，原因仍为当前环境缺少 MSVC `link.exe`
+- PowerShell 实机验证：已解析出 `shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App`，说明桌面版 Codex App 可通过系统应用入口唤醒，而非直接依附 `Codex.exe` 控制台进程
+
+### 6. 风险复核
+- 已修复“关掉 PowerShell 会把桌面版 Codex App 一起关掉”的主要根因：优先使用 `explorer.exe shell:AppsFolder...` 唤醒桌面应用。
+- 已修复“切换账号时看不到过程反馈”的核心体验问题：即使用户勾选“不再提示”，切换时仍会显示进度态弹窗。
+- CLI 重启逻辑本次未展开重构，仍保留现有 PowerShell 兜底方案，符合本轮“先只修 Codex App”范围。

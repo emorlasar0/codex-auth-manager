@@ -884,7 +884,7 @@ function Resolve-CodexDesktopLaunchTarget([string]$executablePath, [string]$comm
             if ($application -and $application.Id) {{
                 return [pscustomobject]@{{
                     mode = 'appx'
-                    value = 'shell:AppsFolder\{0}!{1}' -f $package.PackageFamilyName, $application.Id
+                    value = 'shell:AppsFolder\{{0}}!\{{1}}' -f $package.PackageFamilyName, $application.Id
                 }}
             }}
         }} catch {{

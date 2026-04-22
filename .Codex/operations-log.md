@@ -140,3 +140,10 @@
 - 已修复“关掉 PowerShell 会把桌面版 Codex App 一起关掉”的主要根因：优先使用 `explorer.exe shell:AppsFolder...` 唤醒桌面应用。
 - 已修复“切换账号时看不到过程反馈”的核心体验问题：即使用户勾选“不再提示”，切换时仍会显示进度态弹窗。
 - CLI 重启逻辑本次未展开重构，仍保留现有 PowerShell 兜底方案，符合本轮“先只修 Codex App”范围。
+## GitHub Actions 失败补救 - Windows 打包
+时间：2026-04-22 15:00:00
+
+- 首次推送后的 `Build Windows Installer`（run id: 24758723395）失败。
+- 根因：Rust `format!` 包裹的 PowerShell 脚本里新增了 `shell:AppsFolder\{0}!{1}`，但未对花括号做转义，导致 GitHub Actions 在编译 `src-tauri/src/lib.rs` 时出现 `invalid reference to positional argument 1`。
+- 补救：将脚本字符串修正为 `shell:AppsFolder\{{0}}!\{{1}}`，保留 PowerShell 自身的 `-f` 格式化语义，同时避免 Rust `format!` 抢先解释占位符。
+- 补救后重新执行本地 `cargo fmt --all`、`npm run lint`、`npm run build`，均已通过，随后重新提交并推送触发新的 Windows 打包。

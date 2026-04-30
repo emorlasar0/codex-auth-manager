@@ -7,6 +7,7 @@ interface HeaderProps {
   onQuickLogin: () => void;
   onReadCurrentAccount: () => void;
   onImportBackup: () => void;
+  onImportAuthZip: () => void;
   onExportBackup: () => void;
   onRefreshAll: () => void | Promise<void>;
   onSyncCodexProxyEnv: () => void | Promise<void>;
@@ -29,6 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
   onQuickLogin,
   onReadCurrentAccount,
   onImportBackup,
+  onImportAuthZip,
   onExportBackup,
   onRefreshAll,
   onSyncCodexProxyEnv,
@@ -280,6 +282,19 @@ export const Header: React.FC<HeaderProps> = ({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                   导入备份
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddMenuOpen(false);
+                    onImportAuthZip();
+                  }}
+                  className="w-full h-10 px-3 rounded-xl text-sm text-left text-[var(--dash-text-primary)] hover:bg-slate-100 flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4 text-[var(--dash-text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v1a3 3 0 003 3h10a3 3 0 003-3v-1" />
+                  </svg>
+                  导入 auth 压缩包
                 </button>
                 <button
                   type="button"

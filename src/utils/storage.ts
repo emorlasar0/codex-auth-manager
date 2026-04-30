@@ -44,12 +44,40 @@ type AccountBackupEntry = {
   authConfig: CodexAuthConfig;
 };
 
+type ZipEntry = {
+  name: string;
+  compressionMethod: number;
+  compressedSize: number;
+  uncompressedSize: number;
+  dataOffset: number;
+};
+
+type RawCredentialFile = Partial<{
+  type: string;
+  email: string;
+  auth_mode: string;
+  OPENAI_API_KEY: string | null;
+  id_token: string;
+  access_token: string;
+  refresh_token: string;
+  account_id: string;
+  last_refresh: string;
+  tokens: Partial<CodexAuthConfig['tokens']>;
+}>;
+
 type AccountsBackupFile = {
   format: 'codex-manager-backup';
   version: '1.0.0';
   exportedAt: string;
   accounts: AccountBackupEntry[];
 };
+
+const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
+const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const ZIP_MAX_COMMENT_LENGTH = 0xffff;
+const ZIP_MAX_JSON_ENTRIES = 500;
+const ZIP_MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
 
 function normalizePlanType(
   value: string | null | undefined
@@ -76,6 +104,200 @@ function normalizeEmail(value?: string | null): string | null {
   if (trimmed.toLowerCase() === 'unknown') return null;
   if (!trimmed.includes('@')) return null;
   return trimmed.toLowerCase();
+}
+
+function takeNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function hasValidTokens(authConfig: Partial<CodexAuthConfig>): authConfig is CodexAuthConfig {
+  const tokens = authConfig.tokens;
+  return Boolean(
+    typeof authConfig.OPENAI_API_KEY !== 'undefined' &&
+    typeof authConfig.last_refresh === 'string' &&
+    typeof tokens?.id_token === 'string' &&
+    tokens.id_token.trim() &&
+    typeof tokens.access_token === 'string' &&
+    tokens.access_token.trim() &&
+    typeof tokens.refresh_token === 'string' &&
+    tokens.refresh_token.trim() &&
+    typeof tokens.account_id === 'string' &&
+    tokens.account_id.trim()
+  );
+}
+
+function getAliasFromZipEntryName(entryName: string): string | undefined {
+  const fileName = entryName.split('/').pop()?.replace(/\.json$/i, '').trim();
+  return fileName || undefined;
+}
+
+function normalizeCredentialFile(
+  rawValue: unknown,
+  entryName: string
+): AccountBackupEntry {
+  if (!rawValue || typeof rawValue !== 'object') {
+    throw new Error(`${entryName} \u4e0d\u662f\u6709\u6548\u7684\u51ed\u8bc1 JSON`);
+  }
+
+  const raw = rawValue as RawCredentialFile;
+  const nestedAuthConfig: Partial<CodexAuthConfig> = {
+    auth_mode: raw.auth_mode,
+    OPENAI_API_KEY: raw.OPENAI_API_KEY ?? null,
+    tokens: {
+      id_token: raw.tokens?.id_token ?? '',
+      access_token: raw.tokens?.access_token ?? '',
+      refresh_token: raw.tokens?.refresh_token ?? '',
+      account_id: raw.tokens?.account_id ?? '',
+    },
+    last_refresh: raw.last_refresh ?? new Date().toISOString(),
+  };
+
+  if (hasValidTokens(nestedAuthConfig)) {
+    return {
+      alias: normalizeEmail(raw.email) ?? getAliasFromZipEntryName(entryName),
+      authConfig: nestedAuthConfig,
+    };
+  }
+
+  const flatAuthConfig: Partial<CodexAuthConfig> = {
+    auth_mode: raw.auth_mode,
+    OPENAI_API_KEY: raw.OPENAI_API_KEY ?? null,
+    tokens: {
+      id_token: takeNonEmptyString(raw.id_token) ?? '',
+      access_token: takeNonEmptyString(raw.access_token) ?? '',
+      refresh_token: takeNonEmptyString(raw.refresh_token) ?? '',
+      account_id: takeNonEmptyString(raw.account_id) ?? '',
+    },
+    last_refresh: raw.last_refresh ?? new Date().toISOString(),
+  };
+
+  if (!hasValidTokens(flatAuthConfig)) {
+    throw new Error(`${entryName} \u7f3a\u5c11\u5b8c\u6574\u7684 token \u5b57\u6bb5`);
+  }
+
+  return {
+    alias: normalizeEmail(raw.email) ?? getAliasFromZipEntryName(entryName),
+    authConfig: flatAuthConfig,
+  };
+}
+
+function getUint16(view: DataView, offset: number): number {
+  return view.getUint16(offset, true);
+}
+
+function getUint32(view: DataView, offset: number): number {
+  return view.getUint32(offset, true);
+}
+
+function findEndOfCentralDirectory(view: DataView): number {
+  const minOffset = Math.max(0, view.byteLength - ZIP_MAX_COMMENT_LENGTH - 22);
+  for (let offset = view.byteLength - 22; offset >= minOffset; offset -= 1) {
+    if (getUint32(view, offset) === ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) {
+      return offset;
+    }
+  }
+  throw new Error('\u65e0\u6548\u7684 ZIP \u6587\u4ef6\uff1a\u672a\u627e\u5230\u4e2d\u592e\u76ee\u5f55');
+}
+
+function parseZipEntries(bytes: Uint8Array): ZipEntry[] {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eocdOffset = findEndOfCentralDirectory(view);
+  const entryCount = getUint16(view, eocdOffset + 10);
+  let offset = getUint32(view, eocdOffset + 16);
+  const decoder = new TextDecoder();
+  const entries: ZipEntry[] = [];
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > view.byteLength || getUint32(view, offset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE) {
+      throw new Error('\u65e0\u6548\u7684 ZIP \u6587\u4ef6\uff1a\u4e2d\u592e\u76ee\u5f55\u635f\u574f');
+    }
+
+    const compressionMethod = getUint16(view, offset + 10);
+    const compressedSize = getUint32(view, offset + 20);
+    const uncompressedSize = getUint32(view, offset + 24);
+    const fileNameLength = getUint16(view, offset + 28);
+    const extraLength = getUint16(view, offset + 30);
+    const commentLength = getUint16(view, offset + 32);
+    const localHeaderOffset = getUint32(view, offset + 42);
+    const fileNameStart = offset + 46;
+    const fileNameEnd = fileNameStart + fileNameLength;
+    const name = decoder.decode(bytes.subarray(fileNameStart, fileNameEnd));
+
+    if (localHeaderOffset + 30 > view.byteLength || getUint32(view, localHeaderOffset) !== ZIP_LOCAL_FILE_HEADER_SIGNATURE) {
+      throw new Error(`\u65e0\u6548\u7684 ZIP \u6587\u4ef6\uff1a${name} \u672c\u5730\u6587\u4ef6\u5934\u635f\u574f`);
+    }
+
+    const localNameLength = getUint16(view, localHeaderOffset + 26);
+    const localExtraLength = getUint16(view, localHeaderOffset + 28);
+    const dataOffset = localHeaderOffset + 30 + localNameLength + localExtraLength;
+
+    entries.push({
+      name,
+      compressionMethod,
+      compressedSize,
+      uncompressedSize,
+      dataOffset,
+    });
+
+    offset = fileNameEnd + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
+async function inflateZipEntry(entry: ZipEntry, bytes: Uint8Array): Promise<string> {
+  if (entry.uncompressedSize > ZIP_MAX_UNCOMPRESSED_BYTES) {
+    throw new Error(`${entry.name} \u8fc7\u5927\uff0c\u5df2\u62d2\u7edd\u5bfc\u5165`);
+  }
+
+  const compressedData = bytes.subarray(entry.dataOffset, entry.dataOffset + entry.compressedSize);
+  if (entry.compressionMethod === 0) {
+    return new TextDecoder().decode(compressedData);
+  }
+
+  if (entry.compressionMethod !== 8) {
+    throw new Error(`${entry.name} \u4f7f\u7528\u4e86\u4e0d\u652f\u6301\u7684 ZIP \u538b\u7f29\u65b9\u5f0f`);
+  }
+
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('\u5f53\u524d WebView \u4e0d\u652f\u6301 ZIP \u89e3\u538b');
+  }
+
+  const compressedBuffer = new ArrayBuffer(compressedData.byteLength);
+  new Uint8Array(compressedBuffer).set(compressedData);
+  const stream = new Blob([compressedBuffer]).stream().pipeThrough(
+    new DecompressionStream('deflate-raw')
+  );
+  const decompressed = await new Response(stream).arrayBuffer();
+  return new TextDecoder().decode(decompressed);
+}
+
+async function parseCredentialZip(bytes: Uint8Array): Promise<AccountsBackupFile> {
+  const jsonEntries = parseZipEntries(bytes).filter(
+    (entry) => !entry.name.endsWith('/') && entry.name.toLowerCase().endsWith('.json')
+  );
+
+  if (jsonEntries.length === 0) {
+    throw new Error('ZIP \u4e2d\u672a\u627e\u5230\u51ed\u8bc1 JSON \u6587\u4ef6');
+  }
+
+  if (jsonEntries.length > ZIP_MAX_JSON_ENTRIES) {
+    throw new Error('ZIP \u4e2d\u7684\u51ed\u8bc1 JSON \u6587\u4ef6\u8fc7\u591a\uff0c\u5df2\u62d2\u7edd\u5bfc\u5165');
+  }
+
+  const accounts: AccountBackupEntry[] = [];
+  for (const entry of jsonEntries) {
+    const content = await inflateZipEntry(entry, bytes);
+    const raw = JSON.parse(content) as unknown;
+    accounts.push(normalizeCredentialFile(raw, entry.name));
+  }
+
+  return {
+    format: 'codex-manager-backup',
+    version: '1.0.0',
+    exportedAt: new Date().toISOString(),
+    accounts,
+  };
 }
 
 function buildIdentityFromAccountInfo(accountInfo: AccountInfo): AccountIdentity {
@@ -404,12 +626,47 @@ export async function importAccountsBackup(
   backupJson: string
 ): Promise<{ importedCount: number }> {
   const backup = parseAccountsBackup(backupJson);
+  return importBackupAccounts(backup);
+}
 
+async function importBackupAccounts(
+  backup: AccountsBackupFile
+): Promise<{ importedCount: number }> {
   for (const account of backup.accounts) {
     await addAccount(account.authConfig, account.alias, { allowMissingIdentity: true });
   }
 
   return { importedCount: backup.accounts.length };
+}
+
+export async function importAccountsBackupFile(
+  filePath: string
+): Promise<{ importedCount: number }> {
+  if (!filePath.toLowerCase().endsWith('.json')) {
+    throw new Error('请选择 Codex Manager JSON 备份文件');
+  }
+
+  const backupJson = await invoke<string>('read_file_content', { filePath });
+  return importAccountsBackup(backupJson);
+}
+
+export async function importAuthZipFile(
+  filePath: string
+): Promise<{ importedCount: number }> {
+  if (!filePath.toLowerCase().endsWith('.zip')) {
+    throw new Error('请选择包含 auth JSON 的 ZIP 压缩包');
+  }
+
+  const bytes = await invoke<number[]>('read_file_bytes', { filePath });
+  const backup = await parseCredentialZip(new Uint8Array(bytes));
+  return importBackupAccounts(backup);
+}
+
+export async function importAuthZipBytes(
+  bytes: Uint8Array
+): Promise<{ importedCount: number }> {
+  const backup = await parseCredentialZip(bytes);
+  return importBackupAccounts(backup);
 }
 
 /**

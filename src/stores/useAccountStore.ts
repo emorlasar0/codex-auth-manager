@@ -12,6 +12,7 @@ import {
   refreshAccountsWorkspaceMetadata,
   type AddAccountOptions,
 } from '../utils/storage';
+import { isTauriRuntime } from '../utils/tauriRuntime';
 
 interface AccountState {
   accounts: StoredAccount[];
@@ -71,6 +72,19 @@ export const useAccountStore = create<AccountState>((set) => ({
     set({ isLoading: true, error: null });
 
     try {
+      if (!isTauriRuntime()) {
+        if (requestId !== latestLoadRequestId) {
+          return;
+        }
+
+        set({
+          ...buildStateFromStore({ version: '1.0.0', accounts: [], config: DEFAULT_CONFIG }),
+          isLoading: false,
+          error: null,
+        });
+        return;
+      }
+
       const initialStore = await loadAccountsStore();
       await syncCurrent();
       await refreshAccountsWorkspaceMetadata(initialStore.config);

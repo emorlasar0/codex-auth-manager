@@ -12,6 +12,29 @@ dist
 dist-ssr
 *.local
 
+# Local credentials and account exports
+*.zip
+/auth.json
+/.env
+/.env.*
+/accounts.json
+/auths/
+/codex-manager/
+/.codex/
+/.codex_manager/
+codex_credentials_*
+codex-manager-backup-*.json
+*credentials*.json
+*credentials*.zip
+*credential*.json
+*credential*.zip
+*backup*.json
+*backup*.zip
+
+# Tauri generated files
+/src-tauri/gen/
+/src-tauri/target/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

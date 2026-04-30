@@ -737,6 +737,12 @@ fn read_file_content(file_path: String) -> Result<String, String> {
     fs::read_to_string(&file_path).map_err(|e| e.to_string())
 }
 
+/// 读取文件二进制内容
+#[tauri::command]
+fn read_file_bytes(file_path: String) -> Result<Vec<u8>, String> {
+    fs::read(&file_path).map_err(|e| e.to_string())
+}
+
 /// 写入文件内容
 #[tauri::command]
 fn write_file_content(file_path: String, content: String) -> Result<(), String> {
@@ -2621,6 +2627,7 @@ pub fn run() {
             read_account_auth,
             delete_account_auth,
             read_file_content,
+            read_file_bytes,
             write_file_content,
             get_home_dir,
             restart_codex_processes,

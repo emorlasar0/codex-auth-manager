@@ -28,9 +28,12 @@ import {
 } from './types/accountFilters';
 import { getAccountExpiryBucket, getSubscriptionExpirationState } from './utils/accountStatus';
 import { syncCodexProxyEnv } from './utils/codexEnv';
+import { isTauriRuntime } from './utils/tauriRuntime';
 import {
   exportAccountsBackup,
-  importAccountsBackup,
+  importAccountsBackupFile,
+  importAuthZipBytes,
+  importAuthZipFile,
   isMissingIdentityError,
   type AddAccountOptions,
 } from './utils/storage';
@@ -110,6 +113,7 @@ function App() {
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'warning' } | null>(null);
   const [filters, setFilters] = useState<AccountFilterState>(DEFAULT_ACCOUNT_FILTERS);
   const autoImportInFlightRef = useRef(false);
+  const authZipInputRef = useRef<HTMLInputElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHandlingWindowCloseRef = useRef(false);
   const ignoreCloseRequestUntilRef = useRef(0);
@@ -275,6 +279,8 @@ function App() {
   }, [config.closeBehavior]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) return;
+
     const currentWindow = getCurrentWindow();
     let disposed = false;
     let unlistenWindowClose: (() => void) | null = null;
@@ -363,6 +369,7 @@ function App() {
 
   useEffect(() => {
     if (!hasLoadedAccounts) return;
+    if (!isTauriRuntime()) return;
 
     void invoke('refresh_tray_menu').catch((currentError) => {
       console.error('Failed to refresh tray menu:', currentError);
@@ -546,6 +553,11 @@ function App() {
   };
 
   const handleImportBackup = async () => {
+    if (!isTauriRuntime()) {
+      setError('导入备份需要在 Tauri 桌面窗口中使用，请通过 npm run tauri:dev 打开应用。');
+      return;
+    }
+
     try {
       const selected = await open({
         multiple: false,
@@ -559,14 +571,63 @@ function App() {
 
       if (!selected || Array.isArray(selected)) return;
 
-      const backupJson = await invoke<string>('read_file_content', {
-        filePath: selected,
-      });
-      const result = await importAccountsBackup(backupJson);
+      const result = await importAccountsBackupFile(selected);
       await loadAccounts();
       showToast(`已导入 ${result.importedCount} 个账号`, 'success');
     } catch (currentError) {
       setError(currentError instanceof Error ? currentError.message : '导入备份失败');
+    }
+  };
+
+  const handleImportAuthZip = async () => {
+    if (!isTauriRuntime()) {
+      setError('导入 auth 压缩包需要在 Tauri 桌面窗口中使用，请通过 npm run tauri:dev 打开应用。');
+      return;
+    }
+
+    if (authZipInputRef.current) {
+      authZipInputRef.current.click();
+      return;
+    }
+
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: 'Codex Auth ZIP',
+            extensions: ['zip'],
+          },
+        ],
+      });
+
+      if (!selected || Array.isArray(selected)) return;
+
+      const result = await importAuthZipFile(selected);
+      await loadAccounts();
+      showToast(`已从压缩包导入 ${result.importedCount} 个账号`, 'success');
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : '导入 auth 压缩包失败');
+    }
+  };
+
+  const handleAuthZipUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      setError('请选择 ZIP 压缩包文件');
+      return;
+    }
+
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const result = await importAuthZipBytes(bytes);
+      await loadAccounts();
+      showToast(`已从压缩包导入 ${result.importedCount} 个账号`, 'success');
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : '导入 auth 压缩包失败');
     }
   };
 
@@ -856,6 +917,13 @@ function App() {
 
   return (
     <>
+      <input
+        ref={authZipInputRef}
+        type="file"
+        accept=".zip,application/zip,application/x-zip-compressed"
+        className="hidden"
+        onChange={handleAuthZipUpload}
+      />
       <div className="min-h-screen pb-12 page-enter">
         <Header
           accountCount={accounts.length}
@@ -864,6 +932,7 @@ function App() {
           onQuickLogin={handleQuickLogin}
           onReadCurrentAccount={handleSyncAccount}
           onImportBackup={handleImportBackup}
+          onImportAuthZip={handleImportAuthZip}
           onExportBackup={handleExportBackup}
           onRefreshAll={handleRefreshAll}
           onSyncCodexProxyEnv={handleSyncCodexProxyEnv}

@@ -1,0 +1,49 @@
+src-tauri/src/lib.rs
+  e84afe290457a0b1 740,742-743,2630
+src/components/Header.tsx
+  52fd3e62abc09b1c 10,33,290,295,297
+.gitignore
+  52fd3e62abc09b1c 15-36
+src/App.tsx
+  52fd3e62abc09b1c 31,34-36,116,282-283,372,556-557,574,582-585,588-589,594-601,604,606-608,610,614-617,619-620,625-630,920-926,935
+src/utils/tauriRuntime.ts
+  52fd3e62abc09b1c 1-7
+src/stores/useAccountStore.ts
+  52fd3e62abc09b1c 15,75-84
+src/utils/storage.ts
+  52fd3e62abc09b1c 266-268,645-646,651-662,665-671
+  e84afe290457a0b1 47-52,55-67,75-81,109-125,129-131,134-139,142-152,155-159,162-171,173-175,179-180,184-185,188-189,192-196,199-212,215-227,230-240,242,245,248-250,253-255,258-259,262-263,269-272,275-277,280-281,284-285,288-292,295-300,629-630,632-634,642-644,647-650,663-664
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.37",
+  "base_commit_sha": "f5ec7933f10913446e4ce261a076754534394d43",
+  "prompts": {
+    "52fd3e62abc09b1c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddc3c-8ffe-7300-af37-477dbf2bf751",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yunhe <yunhe@tsign.cn>",
+      "messages": [],
+      "total_additions": 1684,
+      "total_deletions": 1537,
+      "accepted_lines": 1684,
+      "overriden_lines": 0
+    },
+    "e84afe290457a0b1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddc2e-5538-7122-a417-a1d3bd898944",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yunhe <yunhe@tsign.cn>",
+      "messages": [],
+      "total_additions": 3978,
+      "total_deletions": 3660,
+      "accepted_lines": 3958,
+      "overriden_lines": 0
+    }
+  }
+}

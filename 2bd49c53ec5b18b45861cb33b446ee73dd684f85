@@ -1,0 +1,56 @@
+src/stores/useAccountStore.ts
+  68ce9a7b0075a1c0 2,12,129
+src/components/AddAccountModal.tsx
+  68ce9a7b0075a1c0 4,52
+src/utils/storage.ts
+  68ce9a7b0075a1c0 184-195,977-980
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "2bd49c53ec5b18b45861cb33b446ee73dd684f85",
+  "prompts": {
+    "68ce9a7b0075a1c0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dfd14-8c37-7e71-bcf3-36159b03a0ef",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yunhe",
+      "messages": [],
+      "total_additions": 1166,
+      "total_deletions": 1162,
+      "accepted_lines": 667,
+      "overriden_lines": 12,
+      "messages_url": "https://tripartite-bff.tsign.cn/cas/213d932ca178202cf119f395ac8cf030ac300c340a0f61a539346e6e3cf27bb8"
+    },
+    "d12887e72b27bd3a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddd01-bc74-7912-9cf8-e03c92ec9cc6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yunhe",
+      "messages": [],
+      "total_additions": 129,
+      "total_deletions": 1,
+      "accepted_lines": 128,
+      "overriden_lines": 0,
+      "messages_url": "https://tripartite-bff.tsign.cn/cas/efcf648deb63e660f52e90f7d60e2818c5e26cc717f7fb109495b24be986a842"
+    },
+    "e84afe290457a0b1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddc2e-5538-7122-a417-a1d3bd898944",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yunhe",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 71,
+      "overriden_lines": 3,
+      "messages_url": "https://tripartite-bff.tsign.cn/cas/f38bf1d2520ca070cc0e1b71a56669fc64523abbfd68e527d66916c5d54bd055"
+    }
+  }
+}

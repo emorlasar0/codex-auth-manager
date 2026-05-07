@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { normalizeCredentialJson } from '../utils/storage';
 
 interface AddAccountModalProps {
   isOpen: boolean;
@@ -48,22 +49,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
     setIsLoading(true);
 
     try {
-      const parsed = JSON.parse(authJson);
-      const hasValidTokens =
-        parsed.tokens &&
-        typeof parsed.tokens.id_token === 'string' &&
-        parsed.tokens.id_token.trim() &&
-        typeof parsed.tokens.access_token === 'string' &&
-        parsed.tokens.access_token.trim() &&
-        typeof parsed.tokens.refresh_token === 'string' &&
-        parsed.tokens.refresh_token.trim() &&
-        typeof parsed.tokens.account_id === 'string' &&
-        parsed.tokens.account_id.trim();
-
-      if (!hasValidTokens) {
-        throw new Error('\u65e0\u6548\u7684 auth.json \u683c\u5f0f\uff1a\u7f3a\u5c11\u5b8c\u6574\u7684 tokens \u5b57\u6bb5');
-      }
-
+      normalizeCredentialJson(authJson);
       await onAdd(authJson, alias || undefined);
 
       setAuthJson('');

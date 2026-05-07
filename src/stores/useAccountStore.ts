@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { StoredAccount, AccountsStore, AppConfig, UsageInfo, CodexAuthConfig } from '../types';
+import type { StoredAccount, AccountsStore, AppConfig, UsageInfo } from '../types';
 import {
   loadAccountsStore,
   saveAccountsStore,
@@ -9,6 +9,7 @@ import {
   updateAccountUsage as updateUsage,
   syncCurrentAccount as syncCurrent,
   isMissingIdentityError,
+  normalizeCredentialJson,
   refreshAccountsWorkspaceMetadata,
   type AddAccountOptions,
 } from '../utils/storage';
@@ -125,7 +126,7 @@ export const useAccountStore = create<AccountState>((set) => ({
     invalidatePendingLoads();
     set({ isLoading: true, error: null });
     try {
-      const authConfig = JSON.parse(authJson) as CodexAuthConfig;
+      const { authConfig } = normalizeCredentialJson(authJson);
       await addAccountToStore(authConfig, alias, options);
       const store = await loadAccountsStore();
       set({

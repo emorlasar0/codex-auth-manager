@@ -181,6 +181,20 @@ function normalizeCredentialFile(
   };
 }
 
+export function normalizeCredentialJson(
+  content: string,
+  entryName = 'auth.json'
+): AccountBackupEntry {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch {
+    throw new Error('JSON 格式无效，请检查输入');
+  }
+
+  return normalizeCredentialFile(raw, entryName);
+}
+
 function getUint16(view: DataView, offset: number): number {
   return view.getUint16(offset, true);
 }
@@ -960,7 +974,10 @@ export async function importAccountFromFile(
   options: AddAccountOptions = {}
 ): Promise<StoredAccount> {
   const content = await invoke<string>('read_file_content', { filePath });
-  const authConfig = JSON.parse(content) as CodexAuthConfig;
+  const { authConfig } = normalizeCredentialJson(
+    content,
+    filePath.split(/[\\/]/).pop() ?? 'auth.json'
+  );
   return addAccount(authConfig, undefined, options);
 }
 
